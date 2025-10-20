@@ -161,7 +161,7 @@ class DatabaseHandler:
             raw_data (str): Raw message data (not used anymore, kept for compatibility)
             json_data (dict): Parsed JSON data
         """
-        if not self.connection or not self.connection.is_connected():
+        if not self._ensure_connection():
             logger.error("Database connection is not established")
             return False
         
@@ -178,7 +178,17 @@ class DatabaseHandler:
             mode = json_data.get('mode', '')
             label = json_data.get('label', '')
             block_id = json_data.get('block_id', '')
-            ack = json_data.get('ack', False)
+            
+            # Handle ack field - convert to boolean
+            ack_value = json_data.get('ack', False)
+            if isinstance(ack_value, bool):
+                ack = ack_value
+            elif isinstance(ack_value, str):
+                # If string, check if it's a truthy value (non-empty string means True)
+                ack = bool(ack_value)
+            else:
+                ack = bool(ack_value)
+            
             tail = json_data.get('tail', '')
             text = json_data.get('text', '')
             msgno = json_data.get('msgno', '')
@@ -238,6 +248,9 @@ class DatabaseHandler:
     
     def _cleanup_old_messages(self):
         """Remove old messages if count exceeds max_messages limit"""
+        if not self.connection or not self.connection.is_connected():
+            return
+        
         try:
             cursor = self.connection.cursor()
             
@@ -264,7 +277,7 @@ class DatabaseHandler:
     
     def get_message_count(self):
         """Get total count of messages in database"""
-        if not self.connection or not self.connection.is_connected():
+        if not self._ensure_connection():
             return 0
         
         try:
