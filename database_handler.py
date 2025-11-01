@@ -167,8 +167,6 @@ class DatabaseHandler:
         finally:
             if cursor:
                 cursor.close()
-            logger.error(f"Error creating table: {e}")
-            return False
     
     def insert_message(self, source_ip, source_port, raw_data, json_data):
         """
