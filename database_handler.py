@@ -35,19 +35,26 @@ class DatabaseHandler:
         self.max_messages = max_messages
         self.connection = None
         self.consecutive_failures = 0
+        self.pool_name = "atc_pool"
+        self.pool_size = 5  # Bağlantı havuzu boyutu
         
     def connect(self):
-        """Establish connection to MySQL database"""
+        """Establish connection to MySQL database with connection pooling"""
         try:
-            self.connection = mysql.connector.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database=self.database,
-                autocommit=False,
-                pool_reset_session=True
-            )
+            # İlk bağlantı ise pool oluştur
+            if self.connection is None:
+                self.connection = mysql.connector.connect(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password,
+                    database=self.database,
+                    autocommit=True,  # Autocommit True yapıldı
+                    pool_name=self.pool_name,
+                    pool_size=self.pool_size,
+                    pool_reset_session=True
+                )
+            
             if self.connection.is_connected():
                 self.consecutive_failures = 0
                 logger.info(f"Successfully connected to MySQL database: {self.database}")
@@ -64,15 +71,17 @@ class DatabaseHandler:
         try:
             if self.connection and self.connection.is_connected():
                 # Test connection with a ping
-                self.connection.ping(reconnect=False, attempts=1, delay=0)
+                self.connection.ping(reconnect=True, attempts=3, delay=1)
                 return True
         except Exception as e:
             logger.warning(f"Connection lost: {e}")
+            self.connection = None  # Bağlantıyı sıfırla
         
         # If too many consecutive failures, wait before retrying
         if self.consecutive_failures >= 3:
-            logger.info(f"Too many consecutive failures ({self.consecutive_failures}), waiting 5 seconds...")
-            time.sleep(5)
+            wait_time = min(30, 5 + (self.consecutive_failures - 3) * 2)  # Max 30 saniye
+            logger.info(f"Too many consecutive failures ({self.consecutive_failures}), waiting {wait_time} seconds...")
+            time.sleep(wait_time)
         
         # Connection is lost, try to reconnect
         logger.info(f"Attempting to reconnect (consecutive failures: {self.consecutive_failures})...")
@@ -85,23 +94,28 @@ class DatabaseHandler:
     
     def create_database_if_not_exists(self):
         """Create database if it doesn't exist"""
+        temp_connection = None
+        cursor = None
         try:
             # Connect without specifying database
-            connection = mysql.connector.connect(
+            temp_connection = mysql.connector.connect(
                 host=self.host,
                 port=self.port,
                 user=self.user,
                 password=self.password
             )
-            cursor = connection.cursor()
+            cursor = temp_connection.cursor()
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
             logger.info(f"Database '{self.database}' created or already exists")
-            cursor.close()
-            connection.close()
             return True
         except Error as e:
             logger.error(f"Error creating database: {e}")
             return False
+        finally:
+            if cursor:
+                cursor.close()
+            if temp_connection and temp_connection.is_connected():
+                temp_connection.close()
     
     def create_table_if_not_exists(self):
         """Create messages_json_raw table if it doesn't exist"""
@@ -109,6 +123,7 @@ class DatabaseHandler:
             logger.error("Database connection is not established")
             return False
         
+        cursor = None
         try:
             cursor = self.connection.cursor()
             create_table_query = """
@@ -143,11 +158,15 @@ class DatabaseHandler:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
             cursor.execute(create_table_query)
-            self.connection.commit()
+            # autocommit=True olduğu için commit'e gerek yok
             logger.info("Table 'messages_json_raw' created or already exists")
-            cursor.close()
             return True
         except Error as e:
+            logger.error(f"Error creating table: {e}")
+            return False
+        finally:
+            if cursor:
+                cursor.close()
             logger.error(f"Error creating table: {e}")
             return False
     
@@ -165,6 +184,7 @@ class DatabaseHandler:
             logger.error("Database connection is not established")
             return False
         
+        cursor = None
         try:
             cursor = self.connection.cursor()
             
@@ -232,25 +252,30 @@ class DatabaseHandler:
                 app_ver
             ))
             
-            self.connection.commit()
+            # autocommit=True olduğu için commit'e gerek yok
             message_id = cursor.lastrowid
-            cursor.close()
             
             # Clean up old messages if limit exceeded
             self._cleanup_old_messages()
             
             logger.debug(f"Inserted message ID: {message_id}")
+            self.consecutive_failures = 0  # Başarılı işlemde sıfırla
             return True
             
         except Error as e:
             logger.error(f"Error inserting message: {e}")
+            self.consecutive_failures += 1
             return False
+        finally:
+            if cursor:
+                cursor.close()
     
     def _cleanup_old_messages(self):
         """Remove old messages if count exceeds max_messages limit"""
         if not self.connection or not self.connection.is_connected():
             return
         
+        cursor = None
         try:
             cursor = self.connection.cursor()
             
@@ -267,28 +292,32 @@ class DatabaseHandler:
                 LIMIT %s
                 """
                 cursor.execute(delete_query, (messages_to_delete,))
-                self.connection.commit()
+                # autocommit=True olduğu için commit'e gerek yok
                 logger.info(f"Cleaned up {messages_to_delete} old messages")
-            
-            cursor.close()
             
         except Error as e:
             logger.error(f"Error cleaning up old messages: {e}")
+        finally:
+            if cursor:
+                cursor.close()
     
     def get_message_count(self):
         """Get total count of messages in database"""
         if not self._ensure_connection():
             return 0
         
+        cursor = None
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
             count = cursor.fetchone()[0]
-            cursor.close()
             return count
         except Error as e:
             logger.error(f"Error getting message count: {e}")
             return 0
+        finally:
+            if cursor:
+                cursor.close()
     
     def close(self):
         """Close database connection"""
