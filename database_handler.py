@@ -42,35 +42,41 @@ class DatabaseHandler:
         
     def connect(self):
         """Bağlantıyı sıfırdan kur - Pool kullanmadan manuel yönetim"""
-        try:
-            # Eğer bağlantı zaten varsa ve aktifse, tekrar kurma
-            if self.connection and self.connection.is_connected():
-                return True
-
-            # Yeni bağlantı kur
-            self.connection = mysql.connector.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database=self.database,
-                autocommit=True,
-                connection_timeout=5,
-                connection_attempts=3,
-                reconnect=True
-            )
-            
-            if self.connection.is_connected():
-                self.consecutive_failures = 0
-                logger.info(f"Successfully connected to MariaDB: {self.database}")
-                return True
-                
-        except Error as e:
-            logger.error(f"MariaDB connection error: {e}")
-            self.consecutive_failures += 1
-            self.connection = None
-            return False
+        max_attempts = 3
+        attempt = 0
         
+        while attempt < max_attempts:
+            try:
+                # Eğer bağlantı zaten varsa ve aktifse, tekrar kurma
+                if self.connection and self.connection.is_connected():
+                    return True
+
+                # Yeni bağlantı kur
+                self.connection = mysql.connector.connect(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password,
+                    database=self.database,
+                    autocommit=True,
+                    connection_timeout=10
+                )
+                
+                if self.connection.is_connected():
+                    self.consecutive_failures = 0
+                    logger.info(f"Successfully connected to MariaDB: {self.database}")
+                    return True
+                    
+            except Error as e:
+                attempt += 1
+                logger.error(f"MariaDB connection error (attempt {attempt}/{max_attempts}): {e}")
+                self.connection = None
+                
+                if attempt < max_attempts:
+                    time.sleep(2)  # Tekrar denemeden önce 2 saniye bekle
+        
+        # Tüm denemeler başarısız oldu
+        self.consecutive_failures += 1
         return False
     
     def _ensure_connection(self):
