@@ -1,6 +1,7 @@
 """
 Database Handler Module
 Manages MySQL database connections and operations for ATC Datalink Backend
+Persistent MariaDB handler with self-recovery and auto-reconnect for long-term uptime
 """
 
 import mysql.connector
@@ -8,12 +9,13 @@ from mysql.connector import Error
 import logging
 from datetime import datetime
 import json
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseHandler:
-    """Handles all database operations for the ATC Datalink system"""
+    """Persistent MariaDB handler with self-recovery and auto-reconnect"""
     
     def __init__(self, host, port, user, password, database, max_messages):
         """
@@ -35,62 +37,76 @@ class DatabaseHandler:
         self.max_messages = max_messages
         self.connection = None
         self.consecutive_failures = 0
-        self.pool_name = "atc_pool"
-        self.pool_size = 5  # Bağlantı havuzu boyutu
+        self.last_ping = 0
+        self.ping_interval = 60  # saniye — her dakikada bir kontrol
         
     def connect(self):
-        """Establish connection to MySQL database with connection pooling"""
+        """Bağlantıyı sıfırdan kur - Pool kullanmadan manuel yönetim"""
         try:
-            # İlk bağlantı ise pool oluştur
-            if self.connection is None:
-                self.connection = mysql.connector.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.user,
-                    password=self.password,
-                    database=self.database,
-                    autocommit=True,  # Autocommit True yapıldı
-                    pool_name=self.pool_name,
-                    pool_size=self.pool_size,
-                    pool_reset_session=True
-                )
+            # Eğer bağlantı zaten varsa ve aktifse, tekrar kurma
+            if self.connection and self.connection.is_connected():
+                return True
+
+            # Yeni bağlantı kur
+            self.connection = mysql.connector.connect(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.database,
+                autocommit=True,
+                connection_timeout=5,
+                connection_attempts=3,
+                reconnect=True
+            )
             
             if self.connection.is_connected():
                 self.consecutive_failures = 0
-                logger.info(f"Successfully connected to MySQL database: {self.database}")
+                logger.info(f"Successfully connected to MariaDB: {self.database}")
                 return True
+                
         except Error as e:
-            logger.error(f"Error connecting to MySQL database: {e}")
+            logger.error(f"MariaDB connection error: {e}")
             self.consecutive_failures += 1
+            self.connection = None
             return False
+        
+        return False
     
     def _ensure_connection(self):
-        """Ensure database connection is alive, reconnect if necessary"""
-        import time
+        """Bağlantıyı test et, bozuksa yeniden kur - Düzenli ping ile sağlık kontrolü"""
+        now = time.time()
         
-        try:
-            if self.connection and self.connection.is_connected():
-                # Test connection with a ping
-                self.connection.ping(reconnect=True, attempts=3, delay=1)
-                return True
-        except Exception as e:
-            logger.warning(f"Connection lost: {e}")
-            self.connection = None  # Bağlantıyı sıfırla
+        # Her 1 dakikada bir ping at (uzun süre boş kalsa bile bağlantıyı taze tut)
+        if now - self.last_ping > self.ping_interval:
+            try:
+                if self.connection and self.connection.is_connected():
+                    self.connection.ping(reconnect=True, attempts=2, delay=2)
+                    self.last_ping = now
+                    logger.debug("Connection ping successful")
+                else:
+                    raise Exception("Connection not active")
+            except Exception as e:
+                logger.warning(f"Connection check failed: {e}")
+                self.connection = None
+                time.sleep(2)
+                if self.connect():
+                    logger.info("Reconnection successful after ping failure")
+                    self.last_ping = now
+            
+        # Eğer bağlantı halen yoksa veya aktif değilse tekrar kurmayı dene
+        if not self.connection or not self.connection.is_connected():
+            logger.warning("Connection not active, attempting reconnect...")
+            
+            # Çok fazla başarısız deneme varsa bekle
+            if self.consecutive_failures >= 3:
+                wait_time = min(30, 5 + (self.consecutive_failures - 3) * 2)
+                logger.info(f"Too many consecutive failures ({self.consecutive_failures}), waiting {wait_time} seconds...")
+                time.sleep(wait_time)
+            
+            return self.connect()
         
-        # If too many consecutive failures, wait before retrying
-        if self.consecutive_failures >= 3:
-            wait_time = min(30, 5 + (self.consecutive_failures - 3) * 2)  # Max 30 saniye
-            logger.info(f"Too many consecutive failures ({self.consecutive_failures}), waiting {wait_time} seconds...")
-            time.sleep(wait_time)
-        
-        # Connection is lost, try to reconnect
-        logger.info(f"Attempting to reconnect (consecutive failures: {self.consecutive_failures})...")
-        if self.connect():
-            logger.info("Reconnection successful")
-            return True
-        else:
-            logger.error("Reconnection attempt failed")
-            return False
+        return True
     
     def create_database_if_not_exists(self):
         """Create database if it doesn't exist"""
@@ -263,6 +279,7 @@ class DatabaseHandler:
         except Error as e:
             logger.error(f"Error inserting message: {e}")
             self.consecutive_failures += 1
+            self.connection = None  # Hata durumunda bağlantıyı sıfırla
             return False
         finally:
             if cursor:
@@ -312,6 +329,7 @@ class DatabaseHandler:
             return count
         except Error as e:
             logger.error(f"Error getting message count: {e}")
+            self.connection = None  # Hata durumunda bağlantıyı sıfırla
             return 0
         finally:
             if cursor:
