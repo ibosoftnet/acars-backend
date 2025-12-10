@@ -268,11 +268,17 @@ def main():
     # Start application
     try:
         app.start()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        sys.exit(1)
+        import traceback
+        traceback.print_exc()
     finally:
-        app.stop()
+        try:
+            app.stop()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
 if __name__ == '__main__':

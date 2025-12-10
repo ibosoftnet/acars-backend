@@ -39,6 +39,16 @@ class DatabaseHandler:
         self.consecutive_failures = 0
         self.last_ping = 0
         self.ping_interval = 60  # saniye — her dakikada bir kontrol
+    
+    def _safe_is_connected(self):
+        """Güvenli bağlantı kontrolü - IndexError'dan korunur"""
+        try:
+            if not self.connection:
+                return False
+            return self.connection.is_connected()
+        except (Error, IndexError, AttributeError) as e:
+            logger.debug(f"Connection check failed: {e}")
+            return False
         
     def connect(self):
         """Bağlantıyı sıfırdan kur - Pool kullanmadan manuel yönetim"""
@@ -48,7 +58,7 @@ class DatabaseHandler:
         while attempt < max_attempts:
             try:
                 # Eğer bağlantı zaten varsa ve aktifse, tekrar kurma
-                if self.connection and self.connection.is_connected():
+                if self.connection and self._safe_is_connected():
                     return True
 
                 # Yeni bağlantı kur
@@ -59,7 +69,9 @@ class DatabaseHandler:
                     password=self.password,
                     database=self.database,
                     autocommit=True,
-                    connection_timeout=10
+                    connection_timeout=30,  # 10'dan 30'a çıkarıldı
+                    use_pure=True,  # C extension yerine pure Python kullan
+                    ssl_disabled=True  # SSL'i devre dışı bırak
                 )
                 
                 if self.connection.is_connected():
@@ -86,7 +98,7 @@ class DatabaseHandler:
         # Her 1 dakikada bir ping at (uzun süre boş kalsa bile bağlantıyı taze tut)
         if now - self.last_ping > self.ping_interval:
             try:
-                if self.connection and self.connection.is_connected():
+                if self.connection and self._safe_is_connected():
                     self.connection.ping(reconnect=True, attempts=2, delay=2)
                     self.last_ping = now
                     logger.debug("Connection ping successful")
@@ -101,7 +113,7 @@ class DatabaseHandler:
                     self.last_ping = now
             
         # Eğer bağlantı halen yoksa veya aktif değilse tekrar kurmayı dene
-        if not self.connection or not self.connection.is_connected():
+        if not self.connection or not self._safe_is_connected():
             logger.warning("Connection not active, attempting reconnect...")
             
             # Çok fazla başarısız deneme varsa bekle
@@ -135,9 +147,16 @@ class DatabaseHandler:
             return False
         finally:
             if cursor:
-                cursor.close()
-            if temp_connection and temp_connection.is_connected():
-                temp_connection.close()
+                try:
+                    cursor.close()
+                except:
+                    pass
+            if temp_connection:
+                try:
+                    if temp_connection.is_connected():
+                        temp_connection.close()
+                except:
+                    pass
     
     def create_table_if_not_exists(self):
         """Create messages_json_raw table if it doesn't exist"""
@@ -343,6 +362,9 @@ class DatabaseHandler:
     
     def close(self):
         """Close database connection"""
-        if self.connection and self.connection.is_connected():
-            self.connection.close()
-            logger.info("Database connection closed")
+        try:
+            if self.connection and self._safe_is_connected():
+                self.connection.close()
+                logger.info("Database connection closed")
+        except Exception as e:
+            logger.debug(f"Error closing connection: {e}")
