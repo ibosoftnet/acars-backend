@@ -219,9 +219,14 @@ class DatabaseHandler:
             raw_data (str): Raw message data (not used anymore, kept for compatibility)
             json_data (dict): Parsed JSON data
         """
+        # Her mesajda bağlantıyı kontrol et (MySQL wait_timeout sorununu önler)
         if not self._ensure_connection():
-            logger.error("Database connection is not established")
-            return False
+            logger.error("Database connection is not established - attempting force reconnect")
+            # Force reconnect
+            self.connection = None
+            if not self.connect():
+                logger.error("Force reconnect failed")
+                return False
         
         cursor = None
         try:

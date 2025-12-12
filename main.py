@@ -4,6 +4,7 @@ Listens to UDP messages and stores them in MySQL database
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 import configparser
 import sys
 import signal
@@ -14,12 +15,11 @@ from database_handler import DatabaseHandler
 from udp_listener import UDPListener
 from sse_server import SSEServer
 
-# Configure logging
+# Configure logging - will be reconfigured after loading config
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('atc_datalink.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -54,12 +54,46 @@ class ATCDatalinkBackend:
             self.config = configparser.ConfigParser()
             self.config.read(self.config_file)
             
+            # Reconfigure logging with rotating file handler
+            self._setup_logging()
+            
             logger.info(f"Configuration loaded from {self.config_file}")
             return True
             
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
             return False
+    
+    def _setup_logging(self):
+        """Setup logging with rotating file handler based on config"""
+        try:
+            # Get logging config
+            max_log_size_mb = self.config.getint('LOGGING', 'max_log_size_mb', fallback=10)
+            backup_count = self.config.getint('LOGGING', 'backup_count', fallback=3)
+            
+            # Convert MB to bytes
+            max_bytes = max_log_size_mb * 1024 * 1024
+            
+            # Create rotating file handler
+            file_handler = RotatingFileHandler(
+                'atc_datalink.log',
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding='utf-8'
+            )
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            )
+            
+            # Add file handler to root logger
+            root_logger = logging.getLogger()
+            root_logger.addHandler(file_handler)
+            
+            logger.info(f"Logging configured: max_size={max_log_size_mb}MB, backups={backup_count}")
+            
+        except Exception as e:
+            logger.warning(f"Error setting up logging config, using defaults: {e}")
     
     def initialize_database(self):
         """Initialize database connection and create tables"""
@@ -171,15 +205,31 @@ class ATCDatalinkBackend:
             station_id = json_data.get('station_id', 'Unknown')
             logger.info(f"Message from {source_ip}:{source_port} - Station: {station_id}")
             
-            # Store message in database
-            self.db_handler.insert_message(source_ip, source_port, raw_data, json_data)
+            # Store message in database with error handling
+            try:
+                db_success = self.db_handler.insert_message(source_ip, source_port, raw_data, json_data)
+                if not db_success:
+                    logger.error("Database insert returned False")
+            except Exception as db_error:
+                logger.error(f"Database insert exception: {db_error}")
+                import traceback
+                logger.error(f"DB traceback: {traceback.format_exc()}")
             
-            # Broadcast to frontend via SSE
-            if self.sse_server:
-                self.sse_server.broadcast_message(json_data)
+            # Broadcast to frontend via SSE with error handling
+            try:
+                if self.sse_server:
+                    self.sse_server.broadcast_message(json_data)
+                else:
+                    logger.warning("SSE server is None, cannot broadcast")
+            except Exception as sse_error:
+                logger.error(f"SSE broadcast exception: {sse_error}")
+                import traceback
+                logger.error(f"SSE traceback: {traceback.format_exc()}")
             
         except Exception as e:
             logger.error(f"Error handling received message: {e}")
+            import traceback
+            logger.error(f"Handler traceback: {traceback.format_exc()}")
     
     def start(self):
         """Start the ATC Datalink Backend"""

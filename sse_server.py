@@ -77,20 +77,26 @@ class SSEServer:
         Generator function for SSE stream
         Sends messages to connected client
         """
-        # Get client IP before entering generator context
-        client_ip = request.remote_addr if request else 'unknown'
+        # Get client IP and store it immediately before request context is lost
+        try:
+            client_ip = str(request.remote_addr) if request and hasattr(request, 'remote_addr') else 'unknown'
+        except (RuntimeError, AttributeError):
+            client_ip = 'unknown'
         
         # Create a queue for this client
         client_queue = queue.Queue(maxsize=100)
         
-        with self.client_lock:
-            self.client_id_counter += 1
-            client_id = self.client_id_counter
-            self.clients[client_id] = client_queue
-        
-        logger.info(f"New SSE client connected: {client_ip} (ID: {client_id})")
+        # Initialize client_id to None to avoid reference errors
+        client_id = None
         
         try:
+            with self.client_lock:
+                self.client_id_counter += 1
+                client_id = self.client_id_counter
+                self.clients[client_id] = client_queue
+            
+            logger.info(f"New SSE client connected: {client_ip} (ID: {client_id})")
+            
             # İLK ÖNCE heartbeat gönder ki browser hemen bağlandığını anlasın
             yield f": heartbeat\n\n"
             
@@ -119,9 +125,10 @@ class SSEServer:
             logger.error(f"Error in event stream for client {client_ip} (ID: {client_id}): {e}")
         finally:
             # Remove client from the dictionary
-            with self.client_lock:
-                if client_id in self.clients:
-                    del self.clients[client_id]
+            if client_id is not None:
+                with self.client_lock:
+                    if client_id in self.clients:
+                        del self.clients[client_id]
     
     def start(self):
         """Start SSE server in a separate thread"""

@@ -74,6 +74,8 @@ class UDPListener:
     def _listen(self):
         """Main listening loop (runs in separate thread)"""
         logger.info("UDP listener thread started")
+        consecutive_errors = 0
+        last_message_time = None
         
         while self.running.is_set():
             try:
@@ -81,14 +83,20 @@ class UDPListener:
                 data, addr = self.socket.recvfrom(65535)
                 
                 if data:
+                    last_message_time = __import__('time').time()
                     self._process_message(data, addr)
+                    consecutive_errors = 0  # Reset error counter on success
                     
             except socket.timeout:
                 # Timeout is normal, allows checking running flag
                 continue
             except Exception as e:
+                consecutive_errors += 1
                 if self.running.is_set():
-                    logger.error(f"Error receiving UDP data: {e}")
+                    logger.error(f"Error receiving UDP data (consecutive errors: {consecutive_errors}): {e}")
+                    if consecutive_errors >= 10:
+                        logger.critical(f"Too many consecutive errors ({consecutive_errors}), listener may be broken!")
+                        consecutive_errors = 0  # Reset to avoid spam
         
         logger.info("UDP listener thread stopped")
     
@@ -113,14 +121,21 @@ class UDPListener:
                 logger.debug(f"Received message from {source_ip}:{source_port}")
                 logger.debug(f"JSON data: {json_data}")
                 
-                # Call the callback function
+                # Call the callback function with exception handling
                 if self.message_callback:
-                    self.message_callback(source_ip, source_port, raw_ascii, json_data)
+                    try:
+                        self.message_callback(source_ip, source_port, raw_ascii, json_data)
+                    except Exception as callback_error:
+                        logger.error(f"ERROR in message callback: {callback_error}")
+                        import traceback
+                        logger.error(f"Callback traceback: {traceback.format_exc()}")
             else:
                 logger.warning(f"No valid JSON found in message from {source_ip}:{source_port}")
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
+            import traceback
+            logger.error(f"Processing traceback: {traceback.format_exc()}")
     
     def _extract_json(self, raw_data):
         """
