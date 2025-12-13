@@ -209,11 +209,11 @@ class ATCDatalinkBackend:
             try:
                 db_success = self.db_handler.insert_message(source_ip, source_port, raw_data, json_data)
                 if not db_success:
-                    logger.error("Database insert returned False")
+                    logger.error("Database insert failed")
             except Exception as db_error:
                 logger.error(f"Database insert exception: {db_error}")
                 import traceback
-                logger.error(f"DB traceback: {traceback.format_exc()}")
+                logger.error(f"DB traceback:\n{traceback.format_exc()}")
             
             # Broadcast to frontend via SSE with error handling
             try:
@@ -224,12 +224,12 @@ class ATCDatalinkBackend:
             except Exception as sse_error:
                 logger.error(f"SSE broadcast exception: {sse_error}")
                 import traceback
-                logger.error(f"SSE traceback: {traceback.format_exc()}")
+                logger.error(f"SSE traceback:\n{traceback.format_exc()}")
             
         except Exception as e:
             logger.error(f"Error handling received message: {e}")
             import traceback
-            logger.error(f"Handler traceback: {traceback.format_exc()}")
+            logger.error(f"Handler traceback:\n{traceback.format_exc()}")
     
     def start(self):
         """Start the ATC Datalink Backend"""
@@ -263,14 +263,29 @@ class ATCDatalinkBackend:
         
         # Keep the application running
         try:
+            last_stats_log = 0
             while self.running:
                 time.sleep(1)
                 
+                current_time = time.time()
+                
                 # Periodically log statistics
-                if int(time.time()) % 60 == 0:  # Every minute
+                if int(current_time) % 60 == 0 and int(current_time) != last_stats_log:  # Every minute
+                    last_stats_log = int(current_time)
+                    
                     count = self.db_handler.get_message_count()
                     client_count = self.sse_server.get_client_count() if self.sse_server else 0
-                    logger.info(f"Total messages in database: {count}, SSE clients: {client_count}")
+                    
+                    # Check if UDP listener thread is alive
+                    if self.udp_listener:
+                        stats = self.udp_listener.get_stats()
+                        logger.info(f"Stats - UDP: {stats['total_messages']} msgs, DB: {count} msgs, SSE: {client_count} clients, Thread: {'alive' if stats['thread_alive'] else 'DEAD'}")
+                        
+                        # Thread ölmüşse kritik uyarı
+                        if not stats['thread_alive']:
+                            logger.critical("UDP LISTENER THREAD IS DEAD! Application needs restart!")
+                    else:
+                        logger.info(f"Total messages in database: {count}, SSE clients: {client_count}")
                     
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")

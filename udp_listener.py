@@ -7,6 +7,7 @@ import socket
 import logging
 import json
 import re
+import time
 from threading import Thread, Event
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ class UDPListener:
         self.socket = None
         self.running = Event()
         self.thread = None
+        self.last_message_time = None
+        self.total_messages_received = 0
         
     def start(self):
         """Start the UDP listener in a separate thread"""
@@ -75,7 +78,6 @@ class UDPListener:
         """Main listening loop (runs in separate thread)"""
         logger.info("UDP listener thread started")
         consecutive_errors = 0
-        last_message_time = None
         
         while self.running.is_set():
             try:
@@ -83,7 +85,8 @@ class UDPListener:
                 data, addr = self.socket.recvfrom(65535)
                 
                 if data:
-                    last_message_time = __import__('time').time()
+                    self.last_message_time = time.time()
+                    self.total_messages_received += 1
                     self._process_message(data, addr)
                     consecutive_errors = 0  # Reset error counter on success
                     
@@ -98,7 +101,7 @@ class UDPListener:
                         logger.critical(f"Too many consecutive errors ({consecutive_errors}), listener may be broken!")
                         consecutive_errors = 0  # Reset to avoid spam
         
-        logger.info("UDP listener thread stopped")
+        logger.info(f"UDP listener thread stopped (total messages received: {self.total_messages_received})")
     
     def _process_message(self, data, addr):
         """
@@ -118,24 +121,21 @@ class UDPListener:
             json_data = self._extract_json(raw_ascii)
             
             if json_data:
-                logger.debug(f"Received message from {source_ip}:{source_port}")
-                logger.debug(f"JSON data: {json_data}")
-                
                 # Call the callback function with exception handling
                 if self.message_callback:
                     try:
                         self.message_callback(source_ip, source_port, raw_ascii, json_data)
                     except Exception as callback_error:
-                        logger.error(f"ERROR in message callback: {callback_error}")
+                        logger.error(f"Error in message callback: {callback_error}")
                         import traceback
-                        logger.error(f"Callback traceback: {traceback.format_exc()}")
+                        logger.error(f"Callback traceback:\n{traceback.format_exc()}")
             else:
                 logger.warning(f"No valid JSON found in message from {source_ip}:{source_port}")
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             import traceback
-            logger.error(f"Processing traceback: {traceback.format_exc()}")
+            logger.error(f"Processing traceback:\n{traceback.format_exc()}")
     
     def _extract_json(self, raw_data):
         """
@@ -170,3 +170,16 @@ class UDPListener:
     def is_running(self):
         """Check if listener is running"""
         return self.running.is_set()
+    
+    def is_thread_alive(self):
+        """Check if listener thread is alive"""
+        return self.thread is not None and self.thread.is_alive()
+    
+    def get_stats(self):
+        """Get listener statistics"""
+        return {
+            'running': self.running.is_set(),
+            'thread_alive': self.is_thread_alive(),
+            'total_messages': self.total_messages_received,
+            'last_message_time': self.last_message_time
+        }
