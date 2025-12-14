@@ -13,6 +13,7 @@ from pathlib import Path
 
 from database_handler import DatabaseHandler
 from udp_listener import UDPListener
+from tcp_client import TCPListener
 from sse_server import SSEServer
 
 # Configure logging - will be reconfigured after loading config
@@ -152,6 +153,10 @@ class ATCDatalinkBackend:
                 max_history_messages=100  # Backend'de saklanacak history sayısı
             )
             
+            # Set TCP status callback for SSE health endpoint
+            if hasattr(self, 'udp_listener') and self.udp_listener:
+                self.sse_server.tcp_status_callback = lambda: 'connected' if self.udp_listener.is_connected() else 'disconnected'
+            
             # Start server
             if not self.sse_server.start():
                 logger.error("Failed to start SSE server")
@@ -165,29 +170,39 @@ class ATCDatalinkBackend:
             return False
     
     def initialize_udp_listener(self):
-        """Initialize UDP listener"""
+        """Initialize UDP/TCP listener based on config"""
         try:
             # Get listener configuration
+            listener_type = self.config.get('LISTENER', 'type', fallback='UDP').upper()
             listener_host = self.config.get('LISTENER', 'host')
             listener_port = self.config.getint('LISTENER', 'port')
             
-            # Create UDP listener with message callback
-            self.udp_listener = UDPListener(
-                host=listener_host,
-                port=listener_port,
-                message_callback=self.on_message_received
-            )
+            # Create listener based on type
+            if listener_type == 'TCP':
+                logger.info(f"Initializing TCP client on {listener_host}:{listener_port}")
+                self.udp_listener = TCPListener(
+                    host=listener_host,
+                    port=listener_port,
+                    message_callback=self.on_message_received
+                )
+            else:
+                logger.info(f"Initializing UDP listener on {listener_host}:{listener_port}")
+                self.udp_listener = UDPListener(
+                    host=listener_host,
+                    port=listener_port,
+                    message_callback=self.on_message_received
+                )
             
             # Start listener
             if not self.udp_listener.start():
-                logger.error("Failed to start UDP listener")
+                logger.error(f"Failed to start {listener_type} {'client' if listener_type == 'TCP' else 'listener'}")
                 return False
             
-            logger.info("UDP listener initialized successfully")
+            logger.info(f"{listener_type} {'client' if listener_type == 'TCP' else 'listener'} initialized successfully")
             return True
             
         except Exception as e:
-            logger.error(f"Error initializing UDP listener: {e}")
+            logger.error(f"Error initializing listener: {e}")
             return False
     
     def on_message_received(self, source_ip, source_port, raw_data, json_data):
@@ -279,11 +294,11 @@ class ATCDatalinkBackend:
                     # Check if UDP listener thread is alive
                     if self.udp_listener:
                         stats = self.udp_listener.get_stats()
-                        logger.info(f"Stats - UDP: {stats['total_messages']} msgs, DB: {count} msgs, SSE: {client_count} clients, Thread: {'alive' if stats['thread_alive'] else 'DEAD'}")
+                        logger.info(f"Stats - Listener: {stats['total_messages']} msgs, DB: {count} msgs, SSE: {client_count} clients, Thread: {'alive' if stats['thread_alive'] else 'DEAD'}")
                         
                         # Thread ölmüşse kritik uyarı
                         if not stats['thread_alive']:
-                            logger.critical("UDP LISTENER THREAD IS DEAD! Application needs restart!")
+                            logger.critical("LISTENER THREAD IS DEAD! Application needs restart!")
                     else:
                         logger.info(f"Total messages in database: {count}, SSE clients: {client_count}")
                     

@@ -40,6 +40,7 @@ class SSEServer:
         self.running = Event()
         self.client_lock = Lock()
         self.client_id_counter = 0
+        self.tcp_status_callback = None  # Callback to get TCP connection status
         
         # Setup Flask routes
         self._setup_routes()
@@ -66,10 +67,16 @@ class SSEServer:
         @self.app.route('/health')
         def health():
             """Health check endpoint"""
+            # TCP connection status (if tcp_status_callback is set)
+            tcp_status = 'unknown'
+            if hasattr(self, 'tcp_status_callback') and self.tcp_status_callback:
+                tcp_status = self.tcp_status_callback()
+            
             return {
                 'status': 'ok', 
                 'clients': len(self.clients),
-                'recent_messages': len(self.recent_messages)
+                'recent_messages': len(self.recent_messages),
+                'tcp_status': tcp_status
             }
     
     def _event_stream(self):
