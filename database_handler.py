@@ -38,7 +38,7 @@ class DatabaseHandler:
         self.connection = None
         self.consecutive_failures = 0
         self.last_ping = 0
-        self.ping_interval = 60  # saniye — her dakikada bir kontrol
+        self.ping_interval = 30  # saniye — her 30 saniyede bir kontrol (timeout'u önler)
     
     def _safe_is_connected(self):
         """Güvenli bağlantı kontrolü - IndexError'dan korunur"""
@@ -49,6 +49,21 @@ class DatabaseHandler:
         except (Error, IndexError, AttributeError) as e:
             logger.debug(f"Connection check failed: {e}")
             return False
+    
+    def _get_cursor(self):
+        """Güvenli cursor alma - Bağlantı sorununda otomatik reconnect"""
+        if not self._ensure_connection():
+            raise Error("Cannot establish database connection")
+        
+        try:
+            return self.connection.cursor()
+        except (IndexError, Error, AttributeError) as e:
+            # cursor() içindeki is_connected() IndexError fırlatabilir
+            logger.warning(f"Cursor creation failed: {e}, attempting reconnect...")
+            self.connection = None
+            if not self.connect():
+                raise Error("Reconnection failed after cursor error")
+            return self.connection.cursor()
         
     def connect(self):
         """Bağlantıyı sıfırdan kur - Pool kullanmadan manuel yönetim"""
@@ -95,7 +110,7 @@ class DatabaseHandler:
         """Bağlantıyı test et, bozuksa yeniden kur - Düzenli ping ile sağlık kontrolü"""
         now = time.time()
         
-        # Her 1 dakikada bir ping at (uzun süre boş kalsa bile bağlantıyı taze tut)
+        # Her 30 saniyede bir ping at (uzun süre boş kalsa bile bağlantıyı taze tut)
         if now - self.last_ping > self.ping_interval:
             try:
                 if self.connection and self._safe_is_connected():
@@ -166,7 +181,7 @@ class DatabaseHandler:
         
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
             create_table_query = """
             CREATE TABLE IF NOT EXISTS messages_json_raw (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -230,7 +245,7 @@ class DatabaseHandler:
         
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
             
             # Extract all fields from JSON
             timestamp_msg = json_data.get('timestamp', None)
@@ -313,16 +328,19 @@ class DatabaseHandler:
             return False
         finally:
             if cursor:
-                cursor.close()
+                try:
+                    cursor.close()
+                except:
+                    pass
     
     def _cleanup_old_messages(self):
         """Remove old messages if count exceeds max_messages limit"""
-        if not self.connection or not self.connection.is_connected():
+        if not self._safe_is_connected():
             return
         
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
             
             # Count total messages
             cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
@@ -344,7 +362,10 @@ class DatabaseHandler:
             logger.error(f"Error cleaning up old messages: {e}")
         finally:
             if cursor:
-                cursor.close()
+                try:
+                    cursor.close()
+                except:
+                    pass
     
     def get_message_count(self):
         """Get total count of messages in database"""
@@ -353,7 +374,7 @@ class DatabaseHandler:
         
         cursor = None
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
             cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
             count = cursor.fetchone()[0]
             return count
@@ -363,7 +384,10 @@ class DatabaseHandler:
             return 0
         finally:
             if cursor:
-                cursor.close()
+                try:
+                    cursor.close()
+                except:
+                    pass
     
     def close(self):
         """Close database connection"""
