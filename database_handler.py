@@ -39,6 +39,7 @@ class DatabaseHandler:
         self.consecutive_failures = 0
         self.last_ping = 0
         self.ping_interval = 30  # saniye — her 30 saniyede bir kontrol (timeout'u önler)
+        self.insert_count = 0  # Cleanup için mesaj sayacı
     
     def _safe_is_connected(self):
         """Güvenli bağlantı kontrolü - IndexError'dan korunur"""
@@ -345,11 +346,16 @@ class DatabaseHandler:
             # autocommit=True olduğu için commit'e gerek yok
             message_id = cursor.lastrowid
             
-            # Clean up old messages if limit exceeded - kritik değil, hata olursa devam et
-            try:
-                self._cleanup_old_messages()
-            except Exception as cleanup_err:
-                logger.debug(f"Cleanup failed (non-critical): {cleanup_err}")
+            # Mesaj sayacını artır
+            self.insert_count += 1
+            
+            # Clean up old messages if limit exceeded - her 100 mesajda bir
+            if self.insert_count % 100 == 0:
+                try:
+                    self._cleanup_old_messages()
+                    logger.info(f"Periodic cleanup after {self.insert_count} inserts")
+                except Exception as cleanup_err:
+                    logger.debug(f"Cleanup failed (non-critical): {cleanup_err}")
             
             logger.debug(f"Inserted message ID: {message_id}")
             self.consecutive_failures = 0  # Başarılı işlemde sıfırla
