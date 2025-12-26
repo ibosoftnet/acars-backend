@@ -213,16 +213,25 @@ class DatabaseHandler:
                 INDEX idx_app_name (app_name)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
-            cursor.execute(create_table_query)
+            try:
+                cursor.execute(create_table_query)
+            except (IndexError, AttributeError) as ie:
+                logger.error(f"Create table query failed (corrupt packet): {ie}")
+                self.connection = None
+                return False
             # autocommit=True olduğu için commit'e gerek yok
             logger.info("Table 'messages_json_raw' created or already exists")
             return True
         except Error as e:
             logger.error(f"Error creating table: {e}")
+            self.connection = None
             return False
         finally:
             if cursor:
-                cursor.close()
+                try:
+                    cursor.close()
+                except:
+                    pass
     
     def insert_message(self, source_ip, source_port, raw_data, json_data):
         """
@@ -289,7 +298,7 @@ class DatabaseHandler:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
-            cursor.execute(insert_query, (
+            params = (
                 source_ip,
                 source_port,
                 timestamp_msg,
@@ -309,13 +318,38 @@ class DatabaseHandler:
                 assstat,
                 app_name,
                 app_ver
-            ))
+            )
+            
+            # Execute with IndexError protection and retry
+            try:
+                cursor.execute(insert_query, params)
+            except (IndexError, AttributeError) as ie:
+                # Corrupt packet - force reconnect and retry once
+                logger.warning(f"Insert query failed (corrupt packet): {ie}, retrying...")
+                self.connection = None
+                cursor.close()
+                
+                # Retry once with fresh connection
+                if not self.connect():
+                    logger.error("Failed to reconnect for retry")
+                    return False
+                
+                cursor = self._get_cursor()
+                try:
+                    cursor.execute(insert_query, params)
+                except (IndexError, AttributeError, Error) as retry_err:
+                    logger.error(f"Insert retry also failed: {retry_err}")
+                    self.connection = None
+                    return False
             
             # autocommit=True olduğu için commit'e gerek yok
             message_id = cursor.lastrowid
             
-            # Clean up old messages if limit exceeded
-            self._cleanup_old_messages()
+            # Clean up old messages if limit exceeded - kritik değil, hata olursa devam et
+            try:
+                self._cleanup_old_messages()
+            except Exception as cleanup_err:
+                logger.debug(f"Cleanup failed (non-critical): {cleanup_err}")
             
             logger.debug(f"Inserted message ID: {message_id}")
             self.consecutive_failures = 0  # Başarılı işlemde sıfırla
@@ -342,9 +376,14 @@ class DatabaseHandler:
         try:
             cursor = self._get_cursor()
             
-            # Count total messages
-            cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
-            count = cursor.fetchone()[0]
+            # Count total messages - IndexError'dan korun
+            try:
+                cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
+                count = cursor.fetchone()[0]
+            except (IndexError, AttributeError) as ie:
+                logger.warning(f"Cleanup count query failed (corrupt packet): {ie}")
+                self.connection = None
+                return  # Sessizce çık, kritik değil
             
             if count > self.max_messages:
                 # Delete oldest messages
@@ -354,12 +393,17 @@ class DatabaseHandler:
                 ORDER BY received_at ASC 
                 LIMIT %s
                 """
-                cursor.execute(delete_query, (messages_to_delete,))
-                # autocommit=True olduğu için commit'e gerek yok
-                logger.info(f"Cleaned up {messages_to_delete} old messages")
+                try:
+                    cursor.execute(delete_query, (messages_to_delete,))
+                    # autocommit=True olduğu için commit'e gerek yok
+                    logger.info(f"Cleaned up {messages_to_delete} old messages")
+                except (IndexError, AttributeError) as ie:
+                    logger.warning(f"Cleanup delete query failed (corrupt packet): {ie}")
+                    self.connection = None
             
         except Error as e:
             logger.error(f"Error cleaning up old messages: {e}")
+            self.connection = None
         finally:
             if cursor:
                 try:
@@ -375,9 +419,14 @@ class DatabaseHandler:
         cursor = None
         try:
             cursor = self._get_cursor()
-            cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
-            count = cursor.fetchone()[0]
-            return count
+            try:
+                cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
+                count = cursor.fetchone()[0]
+                return count
+            except (IndexError, AttributeError) as ie:
+                logger.warning(f"Count query failed (corrupt packet): {ie}")
+                self.connection = None
+                return 0
         except Error as e:
             logger.error(f"Error getting message count: {e}")
             self.connection = None  # Hata durumunda bağlantıyı sıfırla
