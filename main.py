@@ -1,6 +1,6 @@
 """
 ATC Datalink Backend - Main Application
-Listens to UDP messages and stores them in MySQL database
+Connects to TCP server and stores messages in MySQL database
 """
 
 import logging
@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 
 from database_handler import DatabaseHandler
-from udp_listener import UDPListener
 from tcp_client import TCPListener
 from sse_server import SSEServer
 
@@ -41,7 +40,7 @@ class ATCDatalinkBackend:
         self.config_file = config_file
         self.config = None
         self.db_handler = None
-        self.udp_listener = None
+        self.tcp_client = None
         self.sse_server = None
         self.running = False
         
@@ -154,8 +153,8 @@ class ATCDatalinkBackend:
             )
             
             # Set TCP status callback for SSE health endpoint
-            if hasattr(self, 'udp_listener') and self.udp_listener:
-                self.sse_server.tcp_status_callback = lambda: 'connected' if self.udp_listener.is_connected() else 'disconnected'
+            if hasattr(self, 'tcp_client') and self.tcp_client:
+                self.sse_server.tcp_status_callback = lambda: 'connected' if self.tcp_client.is_connected() else 'disconnected'
             
             # Start server
             if not self.sse_server.start():
@@ -169,40 +168,32 @@ class ATCDatalinkBackend:
             logger.error(f"Error initializing SSE server: {e}")
             return False
     
-    def initialize_udp_listener(self):
-        """Initialize UDP/TCP listener based on config"""
+    def initialize_tcp_client(self):
+        """Initialize TCP client for receiving messages"""
         try:
             # Get listener configuration
-            listener_type = self.config.get('LISTENER', 'type', fallback='UDP').upper()
             listener_host = self.config.get('LISTENER', 'host')
             listener_port = self.config.getint('LISTENER', 'port')
             
-            # Create listener based on type
-            if listener_type == 'TCP':
-                logger.info(f"Initializing TCP client on {listener_host}:{listener_port}")
-                self.udp_listener = TCPListener(
-                    host=listener_host,
-                    port=listener_port,
-                    message_callback=self.on_message_received
-                )
-            else:
-                logger.info(f"Initializing UDP listener on {listener_host}:{listener_port}")
-                self.udp_listener = UDPListener(
-                    host=listener_host,
-                    port=listener_port,
-                    message_callback=self.on_message_received
-                )
+            logger.info(f"Initializing TCP client for {listener_host}:{listener_port}")
             
-            # Start listener
-            if not self.udp_listener.start():
-                logger.error(f"Failed to start {listener_type} {'client' if listener_type == 'TCP' else 'listener'}")
+            # Create TCP client
+            self.tcp_client = TCPListener(
+                host=listener_host,
+                port=listener_port,
+                message_callback=self.on_message_received
+            )
+            
+            # Start client
+            if not self.tcp_client.start():
+                logger.error("Failed to start TCP client")
                 return False
             
-            logger.info(f"{listener_type} {'client' if listener_type == 'TCP' else 'listener'} initialized successfully")
+            logger.info("TCP client initialized successfully")
             return True
             
         except Exception as e:
-            logger.error(f"Error initializing listener: {e}")
+            logger.error(f"Error initializing TCP client: {e}")
             return False
     
     def on_message_received(self, source_ip, source_port, raw_data, json_data):
@@ -267,9 +258,9 @@ class ATCDatalinkBackend:
             logger.error("Failed to initialize SSE server")
             return False
         
-        # Initialize UDP listener
-        if not self.initialize_udp_listener():
-            logger.error("Failed to initialize UDP listener")
+        # Initialize TCP client
+        if not self.initialize_tcp_client():
+            logger.error("Failed to initialize TCP client")
             return False
         
         self.running = True
@@ -291,14 +282,22 @@ class ATCDatalinkBackend:
                     count = self.db_handler.get_message_count()
                     client_count = self.sse_server.get_client_count() if self.sse_server else 0
                     
-                    # Check if UDP listener thread is alive
-                    if self.udp_listener:
-                        stats = self.udp_listener.get_stats()
-                        logger.info(f"Stats - Listener: {stats['total_messages']} msgs, DB: {count} msgs, SSE: {client_count} clients, Thread: {'alive' if stats['thread_alive'] else 'DEAD'}")
+                    # Get TCP client stats
+                    if self.tcp_client:
+                        stats = self.tcp_client.get_stats()
+                        conn_status = 'CONNECTED' if stats['connected'] else 'DISCONNECTED'
+                        idle_sec = int(stats.get('idle_seconds', 0))
+                        conn_count = stats.get('connection_count', 0)
+                        
+                        logger.info(
+                            f"Stats - TCP: {conn_status} (idle:{idle_sec}s, reconn:{conn_count}), "
+                            f"Msgs: {stats['total_messages']}, DB: {count}, SSE: {client_count}, "
+                            f"Thread: {'alive' if stats['thread_alive'] else 'DEAD'}"
+                        )
                         
                         # Thread ölmüşse kritik uyarı
                         if not stats['thread_alive']:
-                            logger.critical("LISTENER THREAD IS DEAD! Application needs restart!")
+                            logger.critical("TCP RECEIVER THREAD IS DEAD! Watchdog should restart it.")
                     else:
                         logger.info(f"Total messages in database: {count}, SSE clients: {client_count}")
                     
@@ -312,9 +311,9 @@ class ATCDatalinkBackend:
         logger.info("Stopping ATC Datalink Backend...")
         self.running = False
         
-        # Stop UDP listener
-        if self.udp_listener:
-            self.udp_listener.stop()
+        # Stop TCP client
+        if self.tcp_client:
+            self.tcp_client.stop()
         
         # Stop SSE server
         if self.sse_server:
