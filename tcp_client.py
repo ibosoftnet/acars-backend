@@ -20,7 +20,7 @@ class TCPListener:
     Uses select() for non-blocking I/O and watchdog for connection health.
     """
     
-    def __init__(self, host, port, message_callback):
+    def __init__(self, host, port, message_callback, max_idle_time=600):
         """
         Initialize TCP client
         
@@ -28,6 +28,7 @@ class TCPListener:
             host (str): Server IP address to connect to
             port (int): Server port to connect to
             message_callback (callable): Function to call when message is received
+            max_idle_time (int): Maximum idle time in seconds before reconnect (default: 600)
         """
         self.host = host
         self.port = port
@@ -53,7 +54,7 @@ class TCPListener:
         # Configuration
         self.recv_timeout = 30.0  # 30 second select timeout
         self.watchdog_interval = 60  # Check every 60 seconds
-        self.max_idle_time = 600  # 10 minutes without data = reconnect
+        self.max_idle_time = max_idle_time  # Configurable idle timeout
         self.reconnect_delay = 5  # 5 seconds between reconnect attempts
         
     def start(self):
@@ -164,8 +165,9 @@ class TCPListener:
         while self.running.is_set():
             # Connect if not connected
             if not self.connected:
+                logger.info(f"Not connected, attempting to connect...")
                 if not self._connect():
-                    logger.info(f"Reconnecting in {self.reconnect_delay} seconds...")
+                    logger.warning(f"Connection failed, reconnecting in {self.reconnect_delay} seconds...")
                     time.sleep(self.reconnect_delay)
                     continue
                 buffer = ""  # Clear buffer on new connection
@@ -249,13 +251,35 @@ class TCPListener:
             if not self.running.is_set():
                 break
             
-            # Check if connected but no data for too long
-            if self.connected and self.last_data_time:
-                idle_time = time.time() - self.last_data_time
-                
-                if idle_time > self.max_idle_time:
-                    logger.warning(f"No data for {idle_time:.0f}s, forcing reconnect (watchdog)")
-                    self._close_socket()
+            # Active connection health check
+            if self.connected:
+                with self.socket_lock:
+                    sock = self.client_socket
+                    
+                    if sock:
+                        try:
+                            # Try to get peer name - if connection is broken, this will fail
+                            sock.getpeername()
+                            
+                            # Also check idle time
+                            if self.last_data_time:
+                                idle_time = time.time() - self.last_data_time
+                                
+                                if idle_time > self.max_idle_time:
+                                    logger.warning(f"No data for {idle_time:.0f}s, forcing reconnect (watchdog)")
+                                    logger.info(f"Watchdog: Closing socket and setting connected=False")
+                                    self._close_socket()
+                                    logger.info(f"Watchdog: Socket closed, connected={self.connected}")
+                                elif idle_time > 120:  # Log if idle more than 2 minutes
+                                    logger.debug(f"Connection idle for {idle_time:.0f}s")
+                        except (OSError, socket.error) as e:
+                            # Socket is broken
+                            logger.warning(f"Socket health check failed: {e} - forcing reconnect")
+                            self._close_socket()
+                    else:
+                        # Socket is None but connected is True - inconsistent state
+                        logger.warning("Connected flag is True but socket is None - fixing state")
+                        self.connected = False
             
             # Check if receiver thread is alive
             if not self.receiver_thread or not self.receiver_thread.is_alive():

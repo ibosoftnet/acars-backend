@@ -202,14 +202,17 @@ class ATCDatalinkBackend:
             # Get listener configuration
             listener_host = self.config.get('LISTENER', 'host')
             listener_port = self.config.getint('LISTENER', 'port')
+            max_idle_time = self.config.getint('LISTENER', 'max_idle_time', fallback=600)
             
             logger.info(f"Initializing TCP client for {listener_host}:{listener_port}")
+            logger.info(f"TCP idle timeout: {max_idle_time}s")
             
             # Create TCP client
             self.tcp_client = TCPListener(
                 host=listener_host,
                 port=listener_port,
-                message_callback=self.on_message_received
+                message_callback=self.on_message_received,
+                max_idle_time=max_idle_time
             )
             
             # Start client

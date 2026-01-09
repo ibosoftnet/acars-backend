@@ -104,10 +104,10 @@ class DecodeHandler:
             self.lib.la_config_set_bool(b"prettify_json", True)
             
             self.initialized = True
-            logger.info(f"DecodeHandler başarıyla yüklendi: {lib_path}")
+            logger.info(f"DecodeHandler successfully loaded: {lib_path}")
             
         except Exception as e:
-            logger.error(f"DecodeHandler yüklenemedi: {e}")
+            logger.error(f"DecodeHandler failed to load: {e}")
             self.lib = None
             self.initialized = False
     
@@ -206,7 +206,7 @@ class DecodeHandler:
                 self.lib.la_proto_tree_destroy(node)
                 
         except Exception as e:
-            logger.error(f"Decode hatası (label={label}): {e}")
+            logger.error(f"Decode error (label={label}): {e}")
             return None
     
     def process_message(self, message_data):
@@ -233,6 +233,6 @@ class DecodeHandler:
             decoded = self.decode_message(label, text)
             if decoded:
                 message_data['decoded'] = decoded
-                logger.debug(f"Mesaj decode edildi: label={label}")
+                logger.debug(f"Message decoded: label={label}")
         
         return message_data
