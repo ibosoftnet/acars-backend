@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SSEServer:
     """Handles SSE connections and message broadcasting"""
     
-    def __init__(self, host, port, max_history_messages=100):
+    def __init__(self, host, port, max_history_messages=100, decode_handler=None):
         """
         Initialize SSE server
         
@@ -27,10 +27,12 @@ class SSEServer:
             port (int): Port to listen on
             max_history_messages (int): Maximum history messages to keep in backend
                                        (Frontend decides how many to display)
+            decode_handler: DecodeHandler instance for ACARS decoding
         """
         self.host = host
         self.port = port
         self.max_history_messages = max_history_messages
+        self.decode_handler = decode_handler
         self.clients = {}  # Dictionary to store client queues
         self.recent_messages = []
         self.app = Flask(__name__)
@@ -78,6 +80,33 @@ class SSEServer:
                 'recent_messages': len(self.recent_messages),
                 'tcp_status': tcp_status
             }
+        
+        @self.app.route('/decode', methods=['POST', 'OPTIONS'])
+        def decode():
+            """Decode ACARS message endpoint"""
+            if request.method == 'OPTIONS':
+                return '', 200
+            
+            try:
+                data = request.get_json()
+                label = data.get('label', '')
+                text = data.get('text', '')
+                
+                if not label or not text:
+                    return {'error': 'Label and text required'}, 400
+                
+                if not self.decode_handler or not self.decode_handler.initialized:
+                    return {'error': 'Decoder not available'}, 503
+                
+                if not self.decode_handler.is_decodable(label):
+                    return {'decodable': False, 'decoded': None}
+                
+                decoded = self.decode_handler.decode_message(label, text)
+                return {'decodable': True, 'decoded': decoded}
+                
+            except Exception as e:
+                logger.error(f"Decode endpoint error: {e}")
+                return {'error': str(e)}, 500
     
     def _event_stream(self):
         """

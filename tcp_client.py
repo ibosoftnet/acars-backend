@@ -53,7 +53,7 @@ class TCPListener:
         # Configuration
         self.recv_timeout = 30.0  # 30 second select timeout
         self.watchdog_interval = 60  # Check every 60 seconds
-        self.max_idle_time = 300  # 5 minutes without data = reconnect
+        self.max_idle_time = 600  # 10 minutes without data = reconnect
         self.reconnect_delay = 5  # 5 seconds between reconnect attempts
         
     def start(self):

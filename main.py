@@ -14,6 +14,7 @@ from pathlib import Path
 from database_handler import DatabaseHandler
 from tcp_client import TCPListener
 from sse_server import SSEServer
+from decode_handler import DecodeHandler
 
 # Configure logging - will be reconfigured after loading config
 logging.basicConfig(
@@ -42,6 +43,7 @@ class ATCDatalinkBackend:
         self.db_handler = None
         self.tcp_client = None
         self.sse_server = None
+        self.decode_handler = None
         self.running = False
         
     def load_config(self):
@@ -149,7 +151,8 @@ class ATCDatalinkBackend:
             self.sse_server = SSEServer(
                 host=backend_host,
                 port=backend_port,
-                max_history_messages=100  # Backend'de saklanacak history sayısı
+                max_history_messages=100,  # Backend'de saklanacak history sayısı
+                decode_handler=self.decode_handler  # Decode handler'i geç
             )
             
             # Set TCP status callback for SSE health endpoint
@@ -166,6 +169,31 @@ class ATCDatalinkBackend:
             
         except Exception as e:
             logger.error(f"Error initializing SSE server: {e}")
+            return False
+    
+    def initialize_decode_handler(self):
+        """Initialize ACARS message decoder"""
+        try:
+            # Check if decoding is enabled in config
+            decoding_enabled = self.config.getboolean('DECODING', 'enabled', fallback=True)
+            
+            if not decoding_enabled:
+                logger.info("Decoding disabled in config")
+                self.decode_handler = None
+                return True
+            
+            # Create decode handler
+            self.decode_handler = DecodeHandler()
+            
+            if self.decode_handler.initialized:
+                logger.info("Decode handler initialized successfully")
+            else:
+                logger.warning("Decode handler not initialized - decoding disabled")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error initializing decode handler: {e}")
             return False
     
     def initialize_tcp_client(self):
@@ -211,6 +239,13 @@ class ATCDatalinkBackend:
             station_id = json_data.get('station_id', 'Unknown')
             logger.info(f"Message from {source_ip}:{source_port} - Station: {station_id}")
             
+            # Decode message if possible
+            try:
+                if self.decode_handler and self.decode_handler.initialized:
+                    json_data = self.decode_handler.process_message(json_data)
+            except Exception as decode_error:
+                logger.error(f"Decode exception: {decode_error}")
+            
             # Store message in database with error handling
             try:
                 db_success = self.db_handler.insert_message(source_ip, source_port, raw_data, json_data)
@@ -251,6 +286,11 @@ class ATCDatalinkBackend:
         # Initialize database
         if not self.initialize_database():
             logger.error("Failed to initialize database")
+            return False
+        
+        # Initialize decode handler
+        if not self.initialize_decode_handler():
+            logger.error("Failed to initialize decode handler")
             return False
         
         # Initialize SSE server
