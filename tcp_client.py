@@ -147,6 +147,7 @@ class TCPListener:
         with self.socket_lock:
             if self.client_socket:
                 try:
+                    # Shutdown will wake up any blocking recv/select calls
                     self.client_socket.shutdown(socket.SHUT_RDWR)
                 except:
                     pass
@@ -156,6 +157,7 @@ class TCPListener:
                     pass
                 self.client_socket = None
             self.connected = False
+            logger.debug("Socket closed and connected flag set to False")
     
     def _receiver_loop(self):
         """Main receiver loop with automatic reconnection"""
@@ -183,6 +185,11 @@ class TCPListener:
                 
                 # Use select for timeout-based waiting
                 readable, _, exceptional = select.select([sock], [], [sock], self.recv_timeout)
+                
+                # Check if still connected after select (watchdog might have closed it)
+                if not self.connected:
+                    logger.info("Connection closed by watchdog, reconnecting...")
+                    continue
                 
                 if exceptional:
                     logger.warning("Socket exception detected")
