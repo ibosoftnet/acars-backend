@@ -143,20 +143,25 @@ class TCPListener:
     
     def _close_socket(self):
         """Safely close socket"""
+        # Set connected to False FIRST (outside lock) so receiver loop sees it immediately
+        was_connected = self.connected
+        self.connected = False
+        
         with self.socket_lock:
             if self.client_socket:
                 try:
                     # Shutdown will wake up any blocking recv/select calls
                     self.client_socket.shutdown(socket.SHUT_RDWR)
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Socket shutdown exception (expected): {e}")
                 try:
                     self.client_socket.close()
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Socket close exception: {e}")
                 self.client_socket = None
-            self.connected = False
-            logger.debug("Socket closed and connected flag set to False")
+        
+        if was_connected:
+            logger.info("Socket closed and connected flag set to False")
     
     def _receiver_loop(self):
         """Main receiver loop with automatic reconnection"""
@@ -207,7 +212,9 @@ class TCPListener:
                     continue
                 
                 if not readable:
-                    # Timeout - no data but connection might still be alive
+                    # Timeout - check if still connected (watchdog might have closed it)
+                    if not self.connected:
+                        logger.info("Connection closed during timeout, reconnecting...")
                     continue
                 
                 # Read data
@@ -250,11 +257,11 @@ class TCPListener:
                     
             except Exception as e:
                 if self.running.is_set():
-                    logger.error(f"Receiver error: {e}")
-                    import traceback
-                    logger.debug(traceback.format_exc())
+                    logger.error(f"Receiver error: {e}", exc_info=True)
                     self._close_socket()
                     time.sleep(1)
+                else:
+                    break  # Shutting down
         
         logger.info("Receiver thread stopped")
     
