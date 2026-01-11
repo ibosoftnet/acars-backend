@@ -52,7 +52,6 @@ class TCPListener:
         self.error_count = 0
         
         # Configuration
-        self.recv_timeout = 30.0  # 30 second select timeout
         self.watchdog_interval = 60  # Check every 60 seconds
         self.max_idle_time = max_idle_time  # Configurable idle timeout
         self.reconnect_delay = 5  # 5 seconds between reconnect attempts
@@ -167,28 +166,39 @@ class TCPListener:
         while self.running.is_set():
             # Connect if not connected
             if not self.connected:
-                logger.info(f"Not connected, attempting to connect...")
+                logger.info(f"Not connected, attempting to connect to {self.host}:{self.port}...")
                 if not self._connect():
-                    logger.warning(f"Connection failed, reconnecting in {self.reconnect_delay} seconds...")
+                    logger.warning(f"Connection failed (attempt #{self.error_count}), retrying in {self.reconnect_delay} seconds...")
                     time.sleep(self.reconnect_delay)
                     continue
+                else:
+                    logger.info(f"Successfully connected! Ready to receive data.")
                 buffer = ""  # Clear buffer on new connection
             
             # Receive data using select()
             try:
                 with self.socket_lock:
                     sock = self.client_socket
+                    is_connected = self.connected
                 
-                if not sock:
+                if not sock or not is_connected:
+                    if sock and not is_connected:
+                        logger.info("Connection marked as closed, cleaning up...")
                     self.connected = False
                     continue
                 
-                # Use select for timeout-based waiting
-                readable, _, exceptional = select.select([sock], [], [sock], self.recv_timeout)
+                # Use select for timeout-based waiting (shorter timeout for responsiveness)
+                try:
+                    readable, _, exceptional = select.select([sock], [], [sock], 5.0)  # 5 second timeout
+                except (ValueError, OSError) as e:
+                    # Socket was closed while in select
+                    logger.info(f"Select failed (socket closed): {e}")
+                    self.connected = False
+                    continue
                 
                 # Check if still connected after select (watchdog might have closed it)
                 if not self.connected:
-                    logger.info("Connection closed by watchdog, reconnecting...")
+                    logger.info("Connection closed during select, reconnecting...")
                     continue
                 
                 if exceptional:
@@ -274,9 +284,8 @@ class TCPListener:
                                 
                                 if idle_time > self.max_idle_time:
                                     logger.warning(f"No data for {idle_time:.0f}s, forcing reconnect (watchdog)")
-                                    logger.info(f"Watchdog: Closing socket and setting connected=False")
                                     self._close_socket()
-                                    logger.info(f"Watchdog: Socket closed, connected={self.connected}")
+                                    logger.info(f"Watchdog: Socket closed, connected={self.connected}, will reconnect")
                                 elif idle_time > 120:  # Log if idle more than 2 minutes
                                     logger.debug(f"Connection idle for {idle_time:.0f}s")
                         except (OSError, socket.error) as e:
