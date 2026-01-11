@@ -169,7 +169,8 @@ class TCPListener:
         buffer = ""
         
         while self.running.is_set():
-            # Connect if not connected
+            # CRITICAL: Check connected flag at start of every loop iteration
+            # This ensures we detect watchdog closing the socket immediately
             if not self.connected:
                 logger.info(f"Not connected, attempting to connect to {self.host}:{self.port}...")
                 if not self._connect():
@@ -179,16 +180,15 @@ class TCPListener:
                 else:
                     logger.info(f"Successfully connected! Ready to receive data.")
                 buffer = ""  # Clear buffer on new connection
+                # Don't continue here - proceed to data receiving
             
             # Receive data using select()
             try:
                 with self.socket_lock:
                     sock = self.client_socket
-                    is_connected = self.connected
                 
-                if not sock or not is_connected:
-                    if sock and not is_connected:
-                        logger.info("Connection marked as closed, cleaning up...")
+                if not sock:
+                    logger.warning("Socket is None, marking as disconnected")
                     self.connected = False
                     continue
                 
