@@ -155,10 +155,6 @@ class ATCDatalinkBackend:
                 decode_handler=self.decode_handler  # Decode handler'i geç
             )
             
-            # Set TCP status callback for SSE health endpoint
-            if hasattr(self, 'tcp_client') and self.tcp_client:
-                self.sse_server.tcp_status_callback = lambda: 'connected' if self.tcp_client.is_connected() else 'disconnected'
-            
             # Start server
             if not self.sse_server.start():
                 logger.error("Failed to start SSE server")
@@ -219,6 +215,11 @@ class ATCDatalinkBackend:
             if not self.tcp_client.start():
                 logger.error("Failed to start TCP client")
                 return False
+            
+            # Set TCP status callback for SSE health endpoint (after TCP client is created)
+            if hasattr(self, 'sse_server') and self.sse_server:
+                self.sse_server.tcp_status_callback = lambda: 'connected' if self.tcp_client.is_connected() else 'disconnected'
+                logger.info("TCP status callback set for SSE health endpoint")
             
             logger.info("TCP client initialized successfully")
             return True

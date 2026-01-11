@@ -71,8 +71,15 @@ class SSEServer:
             """Health check endpoint"""
             # TCP connection status (if tcp_status_callback is set)
             tcp_status = 'unknown'
-            if hasattr(self, 'tcp_status_callback') and self.tcp_status_callback:
-                tcp_status = self.tcp_status_callback()
+            try:
+                if hasattr(self, 'tcp_status_callback') and self.tcp_status_callback:
+                    tcp_status = self.tcp_status_callback()
+                    logger.debug(f"TCP status from callback: {tcp_status}")
+                else:
+                    logger.warning(f"tcp_status_callback not set or None")
+            except Exception as e:
+                logger.error(f"Error calling tcp_status_callback: {e}", exc_info=True)
+                tcp_status = 'error'
             
             return {
                 'status': 'ok', 
