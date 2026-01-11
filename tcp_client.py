@@ -374,8 +374,23 @@ class TCPListener:
         return self.receiver_thread is not None and self.receiver_thread.is_alive()
     
     def is_connected(self):
-        """Check if connected to server"""
-        return self.connected and self.client_socket is not None
+        """Check if connected to server - with real socket health check"""
+        if not self.connected or self.client_socket is None:
+            return False
+        
+        # Do a real socket health check
+        try:
+            with self.socket_lock:
+                sock = self.client_socket
+                if sock is None:
+                    return False
+                
+                # Try to get peer name - if connection is broken, this will fail
+                sock.getpeername()
+                return True
+        except (OSError, socket.error, AttributeError):
+            # Socket is dead or disconnected
+            return False
     
     def get_stats(self):
         """Get client statistics"""
