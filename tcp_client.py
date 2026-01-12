@@ -167,41 +167,49 @@ class TCPListener:
         """Main receiver loop with automatic reconnection"""
         logger.info("Receiver thread started")
         buffer = ""
+        consecutive_errors = 0
+        max_consecutive_errors = 10
         
         while self.running.is_set():
-            # CRITICAL: Check connected flag at start of every loop iteration
-            # This ensures we detect watchdog closing the socket immediately
-            if not self.connected:
-                logger.info(f"Not connected, attempting to connect to {self.host}:{self.port}...")
-                if not self._connect():
-                    logger.warning(f"Connection failed (attempt #{self.error_count}), retrying in {self.reconnect_delay} seconds...")
-                    time.sleep(self.reconnect_delay)
-                    continue
-                else:
-                    logger.info(f"Successfully connected! Ready to receive data.")
-                buffer = ""  # Clear buffer on new connection
-                # Don't continue here - proceed to data receiving
-            
-            # Receive data using select()
             try:
+                # CRITICAL: Check connected flag at start of every loop iteration
+                if not self.connected:
+                    consecutive_errors = 0  # Reset error counter on reconnect attempt
+                    logger.info(f"Not connected, attempting to connect to {self.host}:{self.port}...")
+                    
+                    try:
+                        if not self._connect():
+                            logger.warning(f"Connection failed (attempt #{self.error_count}), retrying in {self.reconnect_delay} seconds...")
+                            time.sleep(self.reconnect_delay)
+                            continue
+                        else:
+                            logger.info(f"Successfully connected! Ready to receive data.")
+                            buffer = ""  # Clear buffer on new connection
+                    except Exception as conn_error:
+                        logger.error(f"Connect exception: {conn_error}", exc_info=True)
+                        self.connected = False
+                        time.sleep(self.reconnect_delay)
+                        continue
+                
+                # Receive data using select()
                 with self.socket_lock:
                     sock = self.client_socket
                 
                 if not sock:
                     logger.warning("Socket is None, marking as disconnected")
                     self.connected = False
+                    time.sleep(0.1)
                     continue
                 
                 # Use select for timeout-based waiting (shorter timeout for responsiveness)
                 try:
-                    readable, _, exceptional = select.select([sock], [], [sock], 5.0)  # 5 second timeout
+                    readable, _, exceptional = select.select([sock], [], [sock], 5.0)
                 except (ValueError, OSError) as e:
-                    # Socket was closed while in select
                     logger.info(f"Select failed (socket closed): {e}")
                     self.connected = False
                     continue
                 
-                # Check if still connected after select (watchdog might have closed it)
+                # Check if still connected after select
                 if not self.connected:
                     logger.info("Connection closed during select, reconnecting...")
                     continue
@@ -212,7 +220,7 @@ class TCPListener:
                     continue
                 
                 if not readable:
-                    # Timeout - check if still connected (watchdog might have closed it)
+                    # Timeout - check if still connected
                     if not self.connected:
                         logger.info("Connection closed during timeout, reconnecting...")
                     continue
@@ -221,8 +229,7 @@ class TCPListener:
                 try:
                     data = sock.recv(8192)
                 except (BlockingIOError, socket.error) as e:
-                    # Would block or error
-                    if isinstance(e, socket.error) and e.errno not in (10035, 11):  # WSAEWOULDBLOCK, EAGAIN
+                    if isinstance(e, socket.error) and e.errno not in (10035, 11):
                         logger.error(f"Socket error: {e}")
                         self._close_socket()
                     continue
@@ -234,6 +241,7 @@ class TCPListener:
                 
                 # Update last data time
                 self.last_data_time = time.time()
+                consecutive_errors = 0  # Reset on successful data receive
                 
                 # Decode and process
                 try:
@@ -256,12 +264,16 @@ class TCPListener:
                     buffer = buffer[-10000:]
                     
             except Exception as e:
-                if self.running.is_set():
-                    logger.error(f"Receiver error: {e}", exc_info=True)
-                    self._close_socket()
-                    time.sleep(1)
+                consecutive_errors += 1
+                logger.error(f"Receiver loop exception ({consecutive_errors}/{max_consecutive_errors}): {e}", exc_info=True)
+                self._close_socket()
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.critical(f"Too many consecutive errors ({consecutive_errors}), waiting 30s before retry...")
+                    time.sleep(30)
+                    consecutive_errors = 0
                 else:
-                    break  # Shutting down
+                    time.sleep(1)
         
         logger.info("Receiver thread stopped")
     
