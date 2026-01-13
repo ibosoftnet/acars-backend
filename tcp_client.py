@@ -164,119 +164,102 @@ class TCPListener:
             logger.info("Socket closed and connected flag set to False")
     
     def _receiver_loop(self):
-        """Main receiver loop with automatic reconnection"""
+        """Main receiver loop with automatic reconnection - BULLETPROOF VERSION"""
         logger.info("Receiver thread started")
         buffer = ""
-        consecutive_errors = 0
-        max_consecutive_errors = 10
         
         while self.running.is_set():
-            try:
-                # Get socket reference safely
-                with self.socket_lock:
-                    sock = self.client_socket
+            # ============ CONNECTION PHASE ============
+            # Always check connection state at loop start
+            with self.socket_lock:
+                sock = self.client_socket
+            
+            if not sock or not self.connected:
+                logger.info(f"[RECONNECT] Not connected (sock={sock is not None}, flag={self.connected}), attempting to connect to {self.host}:{self.port}...")
                 
-                # CRITICAL: If no socket OR not connected, try to connect
-                if not sock or not self.connected:
-                    consecutive_errors = 0  # Reset error counter on reconnect attempt
-                    logger.info(f"Not connected (sock={sock is not None}, connected={self.connected}), attempting to connect to {self.host}:{self.port}...")
-                    
-                    try:
-                        if not self._connect():
-                            logger.warning(f"Connection failed (attempt #{self.error_count}), retrying in {self.reconnect_delay} seconds...")
-                            time.sleep(self.reconnect_delay)
-                            continue
-                        else:
-                            logger.info(f"Successfully connected! Ready to receive data.")
-                            buffer = ""  # Clear buffer on new connection
-                            # Re-get socket after successful connect
-                            with self.socket_lock:
-                                sock = self.client_socket
-                            if not sock:
-                                logger.error("Socket is still None after successful connect!")
-                                self.connected = False
-                                continue
-                    except Exception as conn_error:
-                        logger.error(f"Connect exception: {conn_error}", exc_info=True)
-                        self.connected = False
+                try:
+                    success = self._connect()
+                    if not success:
+                        logger.warning(f"[RECONNECT] Failed (error count: {self.error_count}), retry in {self.reconnect_delay}s")
                         time.sleep(self.reconnect_delay)
                         continue
-                
-                # Use select for timeout-based waiting (shorter timeout for responsiveness)
-                try:
-                    readable, _, exceptional = select.select([sock], [], [sock], 5.0)
-                except (ValueError, OSError) as e:
-                    logger.info(f"Select failed (socket closed): {e}")
-                    self.connected = False
-                    continue
-                
-                # Check if still connected after select
-                if not self.connected:
-                    logger.info("Connection closed during select, reconnecting...")
-                    continue
-                
-                if exceptional:
-                    logger.warning("Socket exception detected")
-                    self._close_socket()
-                    continue
-                
-                if not readable:
-                    # Timeout - check if still connected
-                    if not self.connected:
-                        logger.info("Connection closed during timeout, reconnecting...")
-                    continue
-                
-                # Read data
-                try:
-                    data = sock.recv(8192)
-                except (BlockingIOError, socket.error) as e:
-                    if isinstance(e, socket.error) and e.errno not in (10035, 11):
-                        logger.error(f"Socket error: {e}")
-                        self._close_socket()
-                    continue
-                
-                if not data:
-                    logger.warning("Connection closed by server (empty recv)")
-                    self._close_socket()
-                    continue
-                
-                # Update last data time
-                self.last_data_time = time.time()
-                consecutive_errors = 0  # Reset on successful data receive
-                
-                # Decode and process
-                try:
-                    buffer += data.decode('ascii', errors='ignore')
+                    
+                    logger.info(f"[RECONNECT] SUCCESS! Connected to {self.host}:{self.port}")
+                    buffer = ""  # Clear buffer on reconnect
+                    continue  # Go back to start to re-get socket
+                    
                 except Exception as e:
-                    logger.error(f"Decode error: {e}")
+                    logger.error(f"[RECONNECT] Exception during connect: {e}", exc_info=True)
+                    self.connected = False
+                    time.sleep(self.reconnect_delay)
                     continue
-                
-                # Process complete lines
-                while '\n' in buffer:
+            
+            # ============ SELECT PHASE ============
+            # Wait for socket to become readable with 5s timeout
+            try:
+                readable, _, exceptional = select.select([sock], [], [sock], 5.0)
+            except Exception as e:
+                logger.warning(f"[SELECT] Failed (socket probably closed): {e}")
+                self.connected = False
+                continue
+            
+            # Handle exceptional condition
+            if exceptional:
+                logger.warning("[SELECT] Socket in exceptional condition")
+                self._close_socket()
+                continue
+            
+            # Check if connection was closed by watchdog during select
+            if not self.connected:
+                logger.info("[SELECT] Connection closed by watchdog during select")
+                continue
+            
+            # If timeout (no data), just continue to next iteration
+            if not readable:
+                continue
+            
+            # ============ RECEIVE PHASE ============
+            # Socket is readable, try to receive data
+            try:
+                data = sock.recv(8192)
+            except Exception as e:
+                logger.error(f"[RECV] Socket error: {e}")
+                self._close_socket()
+                continue
+            
+            # Empty data means connection closed by remote
+            if not data:
+                logger.warning("[RECV] Connection closed by remote (empty recv)")
+                self._close_socket()
+                continue
+            
+            # ============ PROCESSING PHASE ============
+            # Update timestamp and process data
+            self.last_data_time = time.time()
+            
+            try:
+                buffer += data.decode('ascii', errors='ignore')
+            except Exception as e:
+                logger.error(f"[DECODE] Error: {e}")
+                continue
+            
+            # Process complete lines
+            while '\n' in buffer:
+                try:
                     line, buffer = buffer.split('\n', 1)
                     line = line.strip()
-                    
                     if line:
                         self._process_line(line)
-                
-                # Prevent buffer overflow
-                if len(buffer) > 100000:
-                    logger.warning("Buffer overflow, trimming")
-                    buffer = buffer[-10000:]
-                    
-            except Exception as e:
-                consecutive_errors += 1
-                logger.error(f"Receiver loop exception ({consecutive_errors}/{max_consecutive_errors}): {e}", exc_info=True)
-                self._close_socket()
-                
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.critical(f"Too many consecutive errors ({consecutive_errors}), waiting 30s before retry...")
-                    time.sleep(30)
-                    consecutive_errors = 0
-                else:
-                    time.sleep(1)
+                except Exception as e:
+                    logger.error(f"[PROCESS] Line processing error: {e}")
+                    break  # Break out of line processing, not main loop
+            
+            # Prevent buffer overflow
+            if len(buffer) > 100000:
+                logger.warning("[BUFFER] Overflow detected, trimming to 10KB")
+                buffer = buffer[-10000:]
         
-        logger.info("Receiver thread stopped")
+        logger.info("Receiver thread stopped gracefully")
     
     def _watchdog_loop(self):
         """Watchdog thread to detect stuck connections"""
