@@ -172,10 +172,14 @@ class TCPListener:
         
         while self.running.is_set():
             try:
-                # CRITICAL: Check connected flag at start of every loop iteration
-                if not self.connected:
+                # Get socket reference safely
+                with self.socket_lock:
+                    sock = self.client_socket
+                
+                # CRITICAL: If no socket OR not connected, try to connect
+                if not sock or not self.connected:
                     consecutive_errors = 0  # Reset error counter on reconnect attempt
-                    logger.info(f"Not connected, attempting to connect to {self.host}:{self.port}...")
+                    logger.info(f"Not connected (sock={sock is not None}, connected={self.connected}), attempting to connect to {self.host}:{self.port}...")
                     
                     try:
                         if not self._connect():
@@ -185,21 +189,18 @@ class TCPListener:
                         else:
                             logger.info(f"Successfully connected! Ready to receive data.")
                             buffer = ""  # Clear buffer on new connection
+                            # Re-get socket after successful connect
+                            with self.socket_lock:
+                                sock = self.client_socket
+                            if not sock:
+                                logger.error("Socket is still None after successful connect!")
+                                self.connected = False
+                                continue
                     except Exception as conn_error:
                         logger.error(f"Connect exception: {conn_error}", exc_info=True)
                         self.connected = False
                         time.sleep(self.reconnect_delay)
                         continue
-                
-                # Receive data using select()
-                with self.socket_lock:
-                    sock = self.client_socket
-                
-                if not sock:
-                    logger.warning("Socket is None, marking as disconnected")
-                    self.connected = False
-                    time.sleep(0.1)
-                    continue
                 
                 # Use select for timeout-based waiting (shorter timeout for responsiveness)
                 try:
