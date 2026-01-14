@@ -121,12 +121,31 @@ class TCPListener:
                 except (AttributeError, OSError):
                     pass  # Not available on all platforms
                 
-                # Connect with timeout
-                sock.settimeout(10.0)
-                sock.connect((self.host, self.port))
-                
-                # Set non-blocking mode for select()
+                # CRITICAL: Use non-blocking connect with select() to guarantee timeout works
                 sock.setblocking(False)
+                
+                # Attempt connection (will return immediately with EINPROGRESS/EWOULDBLOCK)
+                try:
+                    sock.connect((self.host, self.port))
+                except (BlockingIOError, socket.error) as e:
+                    # Expected: connection in progress
+                    if e.errno not in (10035, 115):  # WSAEWOULDBLOCK on Windows, EINPROGRESS on Linux
+                        raise
+                
+                # Wait for connection to complete with timeout using select()
+                logger.debug(f"Waiting for connection to complete (10s timeout)...")
+                _, writable, exceptional = select.select([], [sock], [sock], 10.0)
+                
+                if exceptional:
+                    raise socket.error("Connection failed (exceptional condition)")
+                
+                if not writable:
+                    raise socket.timeout("Connection timeout after 10 seconds")
+                
+                # Verify connection succeeded
+                err = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if err != 0:
+                    raise socket.error(f"Connection failed with error code {err}")
                 
                 self.client_socket = sock
                 self.connected = True
