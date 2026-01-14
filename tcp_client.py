@@ -167,15 +167,25 @@ class TCPListener:
         """Main receiver loop with automatic reconnection - BULLETPROOF VERSION"""
         logger.info("Receiver thread started")
         buffer = ""
+        last_heartbeat = time.time()
+        iteration = 0
         
         while self.running.is_set():
+            iteration += 1
+            
+            # Heartbeat every 10 seconds to prove thread is alive
+            if time.time() - last_heartbeat > 10:
+                logger.info(f"[HEARTBEAT] Receiver loop alive, iteration #{iteration}")
+                last_heartbeat = time.time()
             # ============ CONNECTION PHASE ============
             # Always check connection state at loop start
             with self.socket_lock:
                 sock = self.client_socket
             
-            if not sock or not self.connected:
-                logger.info(f"[RECONNECT] Not connected (sock={sock is not None}, flag={self.connected}), attempting to connect to {self.host}:{self.port}...")
+            is_connected = self.connected
+            
+            if not sock or not is_connected:
+                logger.info(f"[RECONNECT] Not connected (sock={sock is not None}, flag={is_connected}), attempting to connect to {self.host}:{self.port}...")
                 
                 try:
                     success = self._connect()
@@ -195,9 +205,9 @@ class TCPListener:
                     continue
             
             # ============ SELECT PHASE ============
-            # Wait for socket to become readable with 5s timeout
+            # Wait for socket to become readable with 1s timeout (shorter for faster watchdog response)
             try:
-                readable, _, exceptional = select.select([sock], [], [sock], 5.0)
+                readable, _, exceptional = select.select([sock], [], [sock], 1.0)
             except Exception as e:
                 logger.warning(f"[SELECT] Failed (socket probably closed): {e}")
                 self.connected = False
