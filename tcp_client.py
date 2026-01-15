@@ -196,15 +196,11 @@ class TCPListener:
             if time.time() - last_heartbeat > 10:
                 logger.info(f"[HEARTBEAT] Receiver loop alive, iteration #{iteration}")
                 last_heartbeat = time.time()
+            
             # ============ CONNECTION PHASE ============
-            # Always check connection state at loop start
-            with self.socket_lock:
-                sock = self.client_socket
-            
-            is_connected = self.connected
-            
-            if not sock or not is_connected:
-                logger.info(f"[RECONNECT] Not connected (sock={sock is not None}, flag={is_connected}), attempting to connect to {self.host}:{self.port}...")
+            # CRITICAL: Check connection flag FIRST before touching socket
+            if not self.connected:
+                logger.info(f"[RECONNECT] Disconnected (flag=False), attempting to connect to {self.host}:{self.port}...")
                 
                 try:
                     success = self._connect()
@@ -215,7 +211,7 @@ class TCPListener:
                     
                     logger.info(f"[RECONNECT] SUCCESS! Connected to {self.host}:{self.port}")
                     buffer = ""  # Clear buffer on reconnect
-                    continue  # Go back to start to re-get socket
+                    continue  # Go back to start
                     
                 except Exception as e:
                     logger.error(f"[RECONNECT] Exception during connect: {e}", exc_info=True)
@@ -223,13 +219,27 @@ class TCPListener:
                     time.sleep(self.reconnect_delay)
                     continue
             
+            # Get socket ONLY after confirming connected=True
+            with self.socket_lock:
+                sock = self.client_socket
+            
+            if not sock:
+                logger.error("[FATAL] Socket is None despite connected=True!")
+                self.connected = False
+                continue
+            
             # ============ SELECT PHASE ============
-            # Wait for socket to become readable with 1s timeout (shorter for faster watchdog response)
+            # Wait for socket to become readable with 1s timeout
             try:
                 readable, _, exceptional = select.select([sock], [], [sock], 1.0)
             except Exception as e:
-                logger.warning(f"[SELECT] Failed (socket probably closed): {e}")
-                self.connected = False
+                logger.warning(f"[SELECT] Failed (socket closed): {e}")
+                self._close_socket()
+                continue
+            
+            # CRITICAL: Re-check connected flag after select (watchdog may have closed socket)
+            if not self.connected:
+                logger.info("[SELECT] Connection closed by watchdog during select")
                 continue
             
             # Handle exceptional condition
@@ -238,12 +248,7 @@ class TCPListener:
                 self._close_socket()
                 continue
             
-            # Check if connection was closed by watchdog during select
-            if not self.connected:
-                logger.info("[SELECT] Connection closed by watchdog during select")
-                continue
-            
-            # If timeout (no data), just continue to next iteration
+            # If timeout (no data), loop back to check connected flag again
             if not readable:
                 continue
             
