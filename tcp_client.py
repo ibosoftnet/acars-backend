@@ -172,15 +172,15 @@ class TCPListener:
                     # Shutdown will wake up any blocking recv/select calls
                     self.client_socket.shutdown(socket.SHUT_RDWR)
                 except Exception as e:
-                    logger.debug(f"Socket shutdown exception (expected): {e}")
+                    logger.info(f"[CLOSE] Socket shutdown (expected): {e}")
                 try:
                     self.client_socket.close()
                 except Exception as e:
-                    logger.debug(f"Socket close exception: {e}")
+                    logger.warning(f"[CLOSE] Socket close error: {e}")
                 self.client_socket = None
         
         if was_connected:
-            logger.info("Socket closed and connected flag set to False")
+            logger.info("[CLOSE] Socket closed and connected flag set to False")
     
     def _receiver_loop(self):
         """Main receiver loop with automatic reconnection - BULLETPROOF VERSION"""
@@ -229,9 +229,9 @@ class TCPListener:
                 continue
             
             # ============ SELECT PHASE ============
-            # Wait for socket to become readable with 1s timeout
+            # CRITICAL: Very short timeout (0.1s) to quickly detect watchdog socket closure
             try:
-                readable, _, exceptional = select.select([sock], [], [sock], 1.0)
+                readable, _, exceptional = select.select([sock], [], [sock], 0.1)
             except Exception as e:
                 logger.warning(f"[SELECT] Failed (socket closed): {e}")
                 self._close_socket()
