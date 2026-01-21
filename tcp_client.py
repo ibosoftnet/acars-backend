@@ -52,9 +52,11 @@ class TCPListener:
         self.error_count = 0
         
         # Configuration
-        self.watchdog_interval = 60  # Check every 60 seconds
+        self.watchdog_interval = 30  # Check every 30 seconds (was 60)
         self.max_idle_time = max_idle_time  # Configurable idle timeout
-        self.reconnect_delay = 5  # 5 seconds between reconnect attempts
+        self.reconnect_delay = 3  # 3 seconds between reconnect attempts (was 5)
+        self.max_reconnect_delay = 30  # Maximum delay between attempts
+        self.reconnect_attempt = 0  # Track reconnect attempts
         
     def start(self):
         """Start the TCP client"""
@@ -99,7 +101,7 @@ class TCPListener:
         logger.info(f"TCP client stopped (total messages: {self.total_messages_received})")
     
     def _connect(self):
-        """Establish TCP connection"""
+        """Establish TCP connection with improved error handling"""
         with self.socket_lock:
             # Close existing socket if any
             if self.client_socket:
@@ -111,6 +113,8 @@ class TCPListener:
                 self.connected = False
             
             try:
+                logger.info(f"Attempting connection to {self.host}:{self.port} (attempt #{self.reconnect_attempt + 1})")
+                
                 # Create new socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -137,31 +141,36 @@ class TCPListener:
                 _, writable, exceptional = select.select([], [sock], [sock], 10.0)
                 
                 if exceptional:
+                    sock.close()
                     raise socket.error("Connection failed (exceptional condition)")
                 
                 if not writable:
+                    sock.close()
                     raise socket.timeout("Connection timeout after 10 seconds")
                 
                 # Verify connection succeeded
                 err = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
                 if err != 0:
+                    sock.close()
                     raise socket.error(f"Connection failed with error code {err}")
                 
                 self.client_socket = sock
                 self.connected = True
                 self.connection_count += 1
+                self.reconnect_attempt = 0  # Reset counter on success
                 self.last_data_time = time.time()
                 
-                logger.info(f"Connected to {self.host}:{self.port} (connection #{self.connection_count})")
+                logger.info(f"✓ Connected to {self.host}:{self.port} (connection #{self.connection_count})")
                 return True
                 
             except Exception as e:
-                logger.error(f"Connection failed: {e}")
+                logger.error(f"✗ Connection failed: {e}")
                 self.error_count += 1
+                self.reconnect_attempt += 1
                 return False
     
     def _close_socket(self):
-        """Safely close socket"""
+        """Safely close socket with improved cleanup"""
         # Set connected to False FIRST (outside lock) so receiver loop sees it immediately
         was_connected = self.connected
         self.connected = False
@@ -169,18 +178,25 @@ class TCPListener:
         with self.socket_lock:
             if self.client_socket:
                 try:
-                    # Shutdown will wake up any blocking recv/select calls
-                    self.client_socket.shutdown(socket.SHUT_RDWR)
-                except Exception as e:
-                    logger.info(f"[CLOSE] Socket shutdown (expected): {e}")
-                try:
+                    # Try to shutdown gracefully first
+                    try:
+                        self.client_socket.shutdown(socket.SHUT_RDWR)
+                    except Exception as e:
+                        # Socket might already be closed or broken
+                        logger.debug(f"[CLOSE] Socket shutdown (expected): {e}")
+                    
+                    # Always close the socket
                     self.client_socket.close()
+                    logger.debug("[CLOSE] Socket closed successfully")
+                    
                 except Exception as e:
                     logger.warning(f"[CLOSE] Socket close error: {e}")
-                self.client_socket = None
+                finally:
+                    # CRITICAL: Always clear the socket reference
+                    self.client_socket = None
         
         if was_connected:
-            logger.info("[CLOSE] Socket closed and connected flag set to False")
+            logger.info("[CLOSE] Socket closed and connected flag set to False - ready for reconnect")
     
     def _receiver_loop(self):
         """Main receiver loop with automatic reconnection - BULLETPROOF VERSION"""
@@ -200,23 +216,26 @@ class TCPListener:
             # ============ CONNECTION PHASE ============
             # CRITICAL: Check connection flag FIRST before touching socket
             if not self.connected:
+                # Calculate exponential backoff delay (3s, 6s, 12s, 24s, 30s max)
+                current_delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempt, 3)), self.max_reconnect_delay)
+                
                 logger.info(f"[RECONNECT] Disconnected (flag=False), attempting to connect to {self.host}:{self.port}...")
                 
                 try:
                     success = self._connect()
                     if not success:
-                        logger.warning(f"[RECONNECT] Failed (error count: {self.error_count}), retry in {self.reconnect_delay}s")
-                        time.sleep(self.reconnect_delay)
+                        logger.warning(f"[RECONNECT] Failed (attempt #{self.reconnect_attempt}, error count: {self.error_count}), retry in {current_delay:.0f}s")
+                        time.sleep(current_delay)
                         continue
                     
-                    logger.info(f"[RECONNECT] SUCCESS! Connected to {self.host}:{self.port}")
+                    logger.info(f"[RECONNECT] ✓ SUCCESS! Connected to {self.host}:{self.port}")
                     buffer = ""  # Clear buffer on reconnect
                     continue  # Go back to start
                     
                 except Exception as e:
                     logger.error(f"[RECONNECT] Exception during connect: {e}", exc_info=True)
                     self.connected = False
-                    time.sleep(self.reconnect_delay)
+                    time.sleep(current_delay)
                     continue
             
             # Get socket ONLY after confirming connected=True
@@ -296,8 +315,8 @@ class TCPListener:
         logger.info("Receiver thread stopped gracefully")
     
     def _watchdog_loop(self):
-        """Watchdog thread to detect stuck connections"""
-        logger.info("Watchdog thread started")
+        """Watchdog thread to detect stuck connections and ensure reconnection"""
+        logger.info("Watchdog thread started - monitoring every {0}s".format(self.watchdog_interval))
         
         while self.running.is_set():
             time.sleep(self.watchdog_interval)
@@ -307,6 +326,8 @@ class TCPListener:
             
             # Active connection health check
             if self.connected:
+                needs_reconnect = False
+                
                 with self.socket_lock:
                     sock = self.client_socket
                     
@@ -320,23 +341,31 @@ class TCPListener:
                                 idle_time = time.time() - self.last_data_time
                                 
                                 if idle_time > self.max_idle_time:
-                                    logger.warning(f"No data for {idle_time:.0f}s, forcing reconnect (watchdog)")
-                                    self._close_socket()
-                                    logger.info(f"Watchdog: Socket closed, connected={self.connected}, will reconnect")
+                                    logger.warning(f"⚠ No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
+                                    needs_reconnect = True
                                 elif idle_time > 120:  # Log if idle more than 2 minutes
                                     logger.debug(f"Connection idle for {idle_time:.0f}s")
                         except (OSError, socket.error) as e:
                             # Socket is broken
                             logger.warning(f"Socket health check failed: {e} - forcing reconnect")
-                            self._close_socket()
+                            needs_reconnect = True
                     else:
                         # Socket is None but connected is True - inconsistent state
                         logger.warning("Connected flag is True but socket is None - fixing state")
                         self.connected = False
+                
+                # Close socket outside of lock to avoid deadlock
+                if needs_reconnect:
+                    self._close_socket()
+                    logger.info(f"Watchdog: Socket closed, connected={self.connected}, receiver will reconnect immediately")
+            
+            # If disconnected for too long, log a reminder
+            elif not self.connected:
+                logger.debug("Watchdog: Currently disconnected, receiver thread should be reconnecting...")
             
             # Check if receiver thread is alive
             if not self.receiver_thread or not self.receiver_thread.is_alive():
-                logger.critical("Receiver thread is dead!")
+                logger.critical("⚠⚠⚠ Receiver thread is dead!")
                 # Try to restart receiver thread
                 if self.running.is_set():
                     logger.info("Attempting to restart receiver thread...")
