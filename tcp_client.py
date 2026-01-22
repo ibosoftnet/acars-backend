@@ -54,8 +54,8 @@ class TCPListener:
         # Configuration
         self.watchdog_interval = 30  # Check every 30 seconds (was 60)
         self.max_idle_time = max_idle_time  # Configurable idle timeout
-        self.reconnect_delay = 3  # 3 seconds between reconnect attempts (was 5)
-        self.max_reconnect_delay = 30  # Maximum delay between attempts
+        self.reconnect_delay = 1  # Base delay between reconnect attempts (was 3)
+        self.max_reconnect_delay = 10  # Maximum delay between attempts (was 30)
         self.reconnect_attempt = 0  # Track reconnect attempts
         
     def start(self):
@@ -204,174 +204,196 @@ class TCPListener:
         buffer = ""
         last_heartbeat = time.time()
         iteration = 0
-        
+
         while self.running.is_set():
-            iteration += 1
-            
-            # Heartbeat every 10 seconds to prove thread is alive
-            if time.time() - last_heartbeat > 10:
-                logger.info(f"[HEARTBEAT] Receiver loop alive, iteration #{iteration}")
-                last_heartbeat = time.time()
-            
-            # ============ CONNECTION PHASE ============
-            # CRITICAL: Check connection flag FIRST before touching socket
-            if not self.connected:
-                # Calculate exponential backoff delay (3s, 6s, 12s, 24s, 30s max)
-                current_delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempt, 3)), self.max_reconnect_delay)
-                
-                logger.info(f"[RECONNECT] Disconnected (flag=False), attempting to connect to {self.host}:{self.port}...")
-                
-                try:
-                    success = self._connect()
-                    if not success:
-                        logger.warning(f"[RECONNECT] Failed (attempt #{self.reconnect_attempt}, error count: {self.error_count}), retry in {current_delay:.0f}s")
+            try:
+                iteration += 1
+
+                # Heartbeat every 10 seconds to prove thread is alive
+                if time.time() - last_heartbeat > 10:
+                    logger.info(f"[HEARTBEAT] Receiver loop alive, iteration #{iteration}")
+                    last_heartbeat = time.time()
+
+                # ============ CONNECTION PHASE ============
+                # CRITICAL: Check connection flag FIRST before touching socket
+                if not self.connected:
+                    # Calculate exponential backoff delay (1s, 2s, 4s, 8s, 10s max)
+                    current_delay = min(self.reconnect_delay * (2 ** min(self.reconnect_attempt, 3)), self.max_reconnect_delay)
+
+                    logger.info(f"[RECONNECT] Disconnected (flag=False), attempting to connect to {self.host}:{self.port}...")
+
+                    try:
+                        success = self._connect()
+                        if not success:
+                            logger.warning(f"[RECONNECT] Failed (attempt #{self.reconnect_attempt}, error count: {self.error_count}), retry in {current_delay:.0f}s")
+                            time.sleep(current_delay)
+                            continue
+
+                        logger.info(f"[RECONNECT] ✓ SUCCESS! Connected to {self.host}:{self.port}")
+                        buffer = ""  # Clear buffer on reconnect
+                        continue  # Go back to start
+
+                    except Exception as e:
+                        logger.error(f"[RECONNECT] Exception during connect: {e}", exc_info=True)
+                        self.connected = False
                         time.sleep(current_delay)
                         continue
-                    
-                    logger.info(f"[RECONNECT] ✓ SUCCESS! Connected to {self.host}:{self.port}")
-                    buffer = ""  # Clear buffer on reconnect
-                    continue  # Go back to start
-                    
-                except Exception as e:
-                    logger.error(f"[RECONNECT] Exception during connect: {e}", exc_info=True)
+
+                # Get socket ONLY after confirming connected=True
+                with self.socket_lock:
+                    sock = self.client_socket
+
+                if not sock:
+                    logger.error("[FATAL] Socket is None despite connected=True!")
                     self.connected = False
-                    time.sleep(current_delay)
                     continue
-            
-            # Get socket ONLY after confirming connected=True
-            with self.socket_lock:
-                sock = self.client_socket
-            
-            if not sock:
-                logger.error("[FATAL] Socket is None despite connected=True!")
-                self.connected = False
-                continue
-            
-            # ============ SELECT PHASE ============
-            # CRITICAL: Very short timeout (0.1s) to quickly detect watchdog socket closure
-            try:
-                readable, _, exceptional = select.select([sock], [], [sock], 0.1)
-            except Exception as e:
-                logger.warning(f"[SELECT] Failed (socket closed): {e}")
-                self._close_socket()
-                continue
-            
-            # CRITICAL: Re-check connected flag after select (watchdog may have closed socket)
-            if not self.connected:
-                logger.info("[SELECT] Connection closed by watchdog during select")
-                continue
-            
-            # Handle exceptional condition
-            if exceptional:
-                logger.warning("[SELECT] Socket in exceptional condition")
-                self._close_socket()
-                continue
-            
-            # If timeout (no data), loop back to check connected flag again
-            if not readable:
-                continue
-            
-            # ============ RECEIVE PHASE ============
-            # Socket is readable, try to receive data
-            try:
-                data = sock.recv(8192)
-            except Exception as e:
-                logger.error(f"[RECV] Socket error: {e}")
-                self._close_socket()
-                continue
-            
-            # Empty data means connection closed by remote
-            if not data:
-                logger.warning("[RECV] Connection closed by remote (empty recv)")
-                self._close_socket()
-                continue
-            
-            # ============ PROCESSING PHASE ============
-            # Update timestamp and process data
-            self.last_data_time = time.time()
-            
-            try:
-                buffer += data.decode('ascii', errors='ignore')
-            except Exception as e:
-                logger.error(f"[DECODE] Error: {e}")
-                continue
-            
-            # Process complete lines
-            while '\n' in buffer:
+
+                # ============ SELECT PHASE ============
+                # CRITICAL: Very short timeout (0.1s) to quickly detect watchdog socket closure
                 try:
-                    line, buffer = buffer.split('\n', 1)
-                    line = line.strip()
-                    if line:
-                        self._process_line(line)
+                    readable, _, exceptional = select.select([sock], [], [sock], 0.1)
                 except Exception as e:
-                    logger.error(f"[PROCESS] Line processing error: {e}")
-                    break  # Break out of line processing, not main loop
-            
-            # Prevent buffer overflow
-            if len(buffer) > 100000:
-                logger.warning("[BUFFER] Overflow detected, trimming to 10KB")
-                buffer = buffer[-10000:]
-        
+                    logger.warning(f"[SELECT] Failed (socket closed): {e}")
+                    self._close_socket()
+                    continue
+
+                # CRITICAL: Re-check connected flag after select (watchdog may have closed socket)
+                if not self.connected:
+                    logger.info("[SELECT] Connection closed by watchdog during select")
+                    continue
+
+                # Handle exceptional condition
+                if exceptional:
+                    logger.warning("[SELECT] Socket in exceptional condition")
+                    self._close_socket()
+                    continue
+
+                # If timeout (no data), loop back to check connected flag again
+                if not readable:
+                    continue
+
+                # ============ RECEIVE PHASE ============
+                # Socket is readable, try to receive data
+                try:
+                    data = sock.recv(8192)
+                except Exception as e:
+                    logger.error(f"[RECV] Socket error: {e}")
+                    self._close_socket()
+                    continue
+
+                # Empty data means connection closed by remote
+                if not data:
+                    logger.warning("[RECV] Connection closed by remote (empty recv)")
+                    self._close_socket()
+                    continue
+
+                # ============ PROCESSING PHASE ============
+                # Update timestamp and process data
+                self.last_data_time = time.time()
+
+                try:
+                    buffer += data.decode('ascii', errors='ignore')
+                except Exception as e:
+                    logger.error(f"[DECODE] Error: {e}")
+                    continue
+
+                # Process complete lines
+                while '\n' in buffer:
+                    try:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if line:
+                            self._process_line(line)
+                    except Exception as e:
+                        logger.error(f"[PROCESS] Line processing error: {e}")
+                        break  # Break out of line processing, not main loop
+
+                # Prevent buffer overflow
+                if len(buffer) > 100000:
+                    logger.warning("[BUFFER] Overflow detected, trimming to 10KB")
+                    buffer = buffer[-10000:]
+
+            except Exception as fatal:
+                # Catch-all to prevent silent thread death
+                logger.critical(f"[RECEIVER-CRASH] Unhandled exception in receiver loop: {fatal}", exc_info=True)
+                # Small pause to avoid tight crash loops
+                time.sleep(1)
+                continue
+
         logger.info("Receiver thread stopped gracefully")
     
     def _watchdog_loop(self):
         """Watchdog thread to detect stuck connections and ensure reconnection"""
         logger.info("Watchdog thread started - monitoring every {0}s".format(self.watchdog_interval))
-        
+
         while self.running.is_set():
-            time.sleep(self.watchdog_interval)
-            
-            if not self.running.is_set():
-                break
-            
-            # Active connection health check
-            if self.connected:
-                needs_reconnect = False
-                
-                with self.socket_lock:
-                    sock = self.client_socket
-                    
-                    if sock:
-                        try:
-                            # Try to get peer name - if connection is broken, this will fail
-                            sock.getpeername()
-                            
-                            # Also check idle time
-                            if self.last_data_time:
-                                idle_time = time.time() - self.last_data_time
-                                
-                                if idle_time > self.max_idle_time:
-                                    logger.warning(f"⚠ No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
+            try:
+                time.sleep(self.watchdog_interval)
+
+                if not self.running.is_set():
+                    break
+
+                # Active connection health check
+                if self.connected:
+                    needs_reconnect = False
+
+                    with self.socket_lock:
+                        sock = self.client_socket
+
+                        if sock:
+                            try:
+                                # Passive check: get peer name, fails if connection is broken
+                                sock.getpeername()
+
+                                # Active probe: zero-length send to detect half-open connections fast
+                                try:
+                                    sock.send(b"")
+                                except (OSError, socket.error) as probe_err:
+                                    logger.warning(f"Socket probe failed: {probe_err} - forcing reconnect")
                                     needs_reconnect = True
-                                elif idle_time > 120:  # Log if idle more than 2 minutes
-                                    logger.debug(f"Connection idle for {idle_time:.0f}s")
-                        except (OSError, socket.error) as e:
-                            # Socket is broken
-                            logger.warning(f"Socket health check failed: {e} - forcing reconnect")
-                            needs_reconnect = True
-                    else:
-                        # Socket is None but connected is True - inconsistent state
-                        logger.warning("Connected flag is True but socket is None - fixing state")
-                        self.connected = False
-                
-                # Close socket outside of lock to avoid deadlock
-                if needs_reconnect:
-                    self._close_socket()
-                    logger.info(f"Watchdog: Socket closed, connected={self.connected}, receiver will reconnect immediately")
-            
-            # If disconnected for too long, log a reminder
-            elif not self.connected:
-                logger.debug("Watchdog: Currently disconnected, receiver thread should be reconnecting...")
-            
-            # Check if receiver thread is alive
-            if not self.receiver_thread or not self.receiver_thread.is_alive():
-                logger.critical("⚠⚠⚠ Receiver thread is dead!")
-                # Try to restart receiver thread
-                if self.running.is_set():
-                    logger.info("Attempting to restart receiver thread...")
-                    self.receiver_thread = Thread(target=self._receiver_loop, name="TCP-Receiver", daemon=True)
-                    self.receiver_thread.start()
-        
+
+                                # Idle check as a secondary safeguard
+                                if self.last_data_time:
+                                    idle_time = time.time() - self.last_data_time
+
+                                    if idle_time > self.max_idle_time:
+                                        logger.warning(f"⚠ No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
+                                        needs_reconnect = True
+                                    elif idle_time > 120:  # Log if idle more than 2 minutes
+                                        logger.debug(f"Connection idle for {idle_time:.0f}s")
+                            except (OSError, socket.error) as e:
+                                # Socket is broken
+                                logger.warning(f"Socket health check failed: {e} - forcing reconnect")
+                                needs_reconnect = True
+                        else:
+                            # Socket is None but connected is True - inconsistent state
+                            logger.warning("Connected flag is True but socket is None - fixing state")
+                            self.connected = False
+
+                    # Close socket outside of lock to avoid deadlock
+                    if needs_reconnect:
+                        self._close_socket()
+                        logger.info(f"Watchdog: Socket closed, connected={self.connected}, receiver will reconnect immediately")
+
+                # If disconnected for too long, log a reminder
+                elif not self.connected:
+                    logger.debug("Watchdog: Currently disconnected, receiver thread should be reconnecting...")
+
+                # Check if receiver thread is alive
+                if not self.receiver_thread or not self.receiver_thread.is_alive():
+                    logger.critical("⚠⚠⚠ Receiver thread is dead!")
+                    # Try to restart receiver thread
+                    if self.running.is_set():
+                        logger.info("Attempting to restart receiver thread...")
+                        self.receiver_thread = Thread(target=self._receiver_loop, name="TCP-Receiver", daemon=True)
+                        self.receiver_thread.start()
+
+            except Exception as fatal:
+                # Prevent watchdog from dying silently
+                logger.critical(f"[WATCHDOG-CRASH] Unhandled exception in watchdog loop: {fatal}", exc_info=True)
+                time.sleep(1)
+                continue
+
         logger.info("Watchdog thread stopped")
     
     def _process_line(self, line):
