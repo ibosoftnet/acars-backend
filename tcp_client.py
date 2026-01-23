@@ -160,11 +160,11 @@ class TCPListener:
                 self.reconnect_attempt = 0  # Reset counter on success
                 self.last_data_time = time.time()
                 
-                logger.info(f"✓ Connected to {self.host}:{self.port} (connection #{self.connection_count})")
+                logger.info(f"Connected to {self.host}:{self.port} (connection #{self.connection_count})")
                 return True
                 
             except Exception as e:
-                logger.error(f"✗ Connection failed: {e}")
+                logger.error(f"Connection failed: {e}")
                 self.error_count += 1
                 self.reconnect_attempt += 1
                 return False
@@ -229,7 +229,7 @@ class TCPListener:
                             time.sleep(current_delay)
                             continue
 
-                        logger.info(f"[RECONNECT] ✓ SUCCESS! Connected to {self.host}:{self.port}")
+                        logger.info(f"[RECONNECT] SUCCESS! Connected to {self.host}:{self.port}")
                         buffer = ""  # Clear buffer on reconnect
                         continue  # Go back to start
 
@@ -357,7 +357,7 @@ class TCPListener:
                                     idle_time = time.time() - self.last_data_time
 
                                     if idle_time > self.max_idle_time:
-                                        logger.warning(f"⚠ No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
+                                        logger.warning(f"No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
                                         needs_reconnect = True
                                     elif idle_time > 120:  # Log if idle more than 2 minutes
                                         logger.debug(f"Connection idle for {idle_time:.0f}s")
@@ -381,7 +381,7 @@ class TCPListener:
 
                 # Check if receiver thread is alive
                 if not self.receiver_thread or not self.receiver_thread.is_alive():
-                    logger.critical("⚠⚠⚠ Receiver thread is dead!")
+                    logger.critical("Receiver thread is dead!")
                     # Try to restart receiver thread
                     if self.running.is_set():
                         logger.info("Attempting to restart receiver thread...")
