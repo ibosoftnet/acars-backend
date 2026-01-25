@@ -57,6 +57,8 @@ class TCPListener:
         self.reconnect_delay = 1  # Base delay between reconnect attempts (was 3)
         self.max_reconnect_delay = 10  # Maximum delay between attempts (was 30)
         self.reconnect_attempt = 0  # Track reconnect attempts
+        self.last_disconnect_time = None  # Track when we last disconnected
+        self.last_watchdog_connect_attempt = 0  # Throttle watchdog connect attempts
         
     def start(self):
         """Start the TCP client"""
@@ -174,6 +176,7 @@ class TCPListener:
         # Set connected to False FIRST (outside lock) so receiver loop sees it immediately
         was_connected = self.connected
         self.connected = False
+        self.last_disconnect_time = time.time()
         
         with self.socket_lock:
             if self.client_socket:
@@ -313,7 +316,7 @@ class TCPListener:
                     logger.warning("[BUFFER] Overflow detected, trimming to 10KB")
                     buffer = buffer[-10000:]
 
-            except Exception as fatal:
+            except BaseException as fatal:
                 # Catch-all to prevent silent thread death
                 logger.critical(f"[RECEIVER-CRASH] Unhandled exception in receiver loop: {fatal}", exc_info=True)
                 # Small pause to avoid tight crash loops
@@ -379,6 +382,21 @@ class TCPListener:
                 elif not self.connected:
                     logger.debug("Watchdog: Currently disconnected, receiver thread should be reconnecting...")
 
+                    # Extra safety: if we have been disconnected for more than 5s, watchdog attempts a connect
+                    now = time.time()
+                    if self.last_disconnect_time and now - self.last_disconnect_time > 5:
+                        # Throttle watchdog-driven connect attempts to once every 10s
+                        if now - self.last_watchdog_connect_attempt >= 10:
+                            self.last_watchdog_connect_attempt = now
+                            logger.info("Watchdog: attempting direct reconnect (safety net)")
+                            success = False
+                            try:
+                                success = self._connect()
+                            except BaseException as e:
+                                logger.error(f"Watchdog direct connect exception: {e}")
+                            if success:
+                                logger.info("Watchdog: direct reconnect succeeded")
+
                 # Check if receiver thread is alive
                 if not self.receiver_thread or not self.receiver_thread.is_alive():
                     logger.critical("Receiver thread is dead!")
@@ -388,7 +406,7 @@ class TCPListener:
                         self.receiver_thread = Thread(target=self._receiver_loop, name="TCP-Receiver", daemon=True)
                         self.receiver_thread.start()
 
-            except Exception as fatal:
+            except BaseException as fatal:
                 # Prevent watchdog from dying silently
                 logger.critical(f"[WATCHDOG-CRASH] Unhandled exception in watchdog loop: {fatal}", exc_info=True)
                 time.sleep(1)
