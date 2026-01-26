@@ -52,13 +52,16 @@ class TCPListener:
         self.error_count = 0
         
         # Configuration
-        self.watchdog_interval = 30  # Check every 30 seconds (was 60)
-        self.max_idle_time = max_idle_time  # Configurable idle timeout
-        self.reconnect_delay = 1  # Base delay between reconnect attempts (was 3)
-        self.max_reconnect_delay = 10  # Maximum delay between attempts (was 30)
+        self.watchdog_interval = 10  # Aggressive health check every 10 seconds
+        self.max_idle_time = max_idle_time  # Configurable idle timeout (hard cap)
+        self.fast_idle_time = min(max_idle_time, 120)  # Fast reconnect if no data for 2 minutes
+        self.reconnect_delay = 1  # Base delay between reconnect attempts
+        self.max_reconnect_delay = 5  # Cap backoff to 5 seconds for quick retries
         self.reconnect_attempt = 0  # Track reconnect attempts
         self.last_disconnect_time = None  # Track when we last disconnected
         self.last_watchdog_connect_attempt = 0  # Throttle watchdog connect attempts
+        self.last_receiver_heartbeat = 0  # Track receiver loop liveness
+        self.receiver_heartbeat_timeout = 30  # Seconds before considering receiver stuck
         
     def start(self):
         """Start the TCP client"""
@@ -216,6 +219,7 @@ class TCPListener:
                 if time.time() - last_heartbeat > 10:
                     logger.info(f"[HEARTBEAT] Receiver loop alive, iteration #{iteration}")
                     last_heartbeat = time.time()
+                    self.last_receiver_heartbeat = last_heartbeat
 
                 # ============ CONNECTION PHASE ============
                 # CRITICAL: Check connection flag FIRST before touching socket
@@ -348,22 +352,37 @@ class TCPListener:
                                 # Passive check: get peer name, fails if connection is broken
                                 sock.getpeername()
 
-                                # Active probe: zero-length send to detect half-open connections fast
+                                # Active probe: non-blocking peek to detect remote close without sending data
+                                probe_ok = True
                                 try:
-                                    sock.send(b"")
+                                    peek = sock.recv(1, socket.MSG_PEEK)
+                                    if peek == b"":
+                                        probe_ok = False
+                                        logger.warning("Socket peek returned empty (peer likely closed) - forcing reconnect")
+                                        needs_reconnect = True
+                                except (BlockingIOError, InterruptedError):
+                                    # No data available, but socket is still responsive; treat as healthy
+                                    pass
                                 except (OSError, socket.error) as probe_err:
-                                    logger.warning(f"Socket probe failed: {probe_err} - forcing reconnect")
+                                    probe_ok = False
+                                    logger.warning(f"Socket peek failed: {probe_err} - forcing reconnect")
                                     needs_reconnect = True
 
-                                # Idle check as a secondary safeguard
+                                # Idle check: if probe OK, do not reconnect solely because of quiet periods
                                 if self.last_data_time:
                                     idle_time = time.time() - self.last_data_time
 
-                                    if idle_time > self.max_idle_time:
-                                        logger.warning(f"No data for {idle_time:.0f}s (max: {self.max_idle_time}s), forcing reconnect (watchdog)")
-                                        needs_reconnect = True
-                                    elif idle_time > 120:  # Log if idle more than 2 minutes
+                                    if idle_time > 60:  # Log if idle more than 1 minute
                                         logger.debug(f"Connection idle for {idle_time:.0f}s")
+
+                                    # Only enforce reconnect on idle if probe is NOT OK
+                                    if not probe_ok:
+                                        if idle_time > self.fast_idle_time:
+                                            logger.warning(f"No data for {idle_time:.0f}s (fast idle {self.fast_idle_time}s), forcing reconnect (watchdog)")
+                                            needs_reconnect = True
+                                        elif idle_time > self.max_idle_time:
+                                            logger.warning(f"No data for {idle_time:.0f}s (max idle {self.max_idle_time}s), forcing reconnect (watchdog)")
+                                            needs_reconnect = True
                             except (OSError, socket.error) as e:
                                 # Socket is broken
                                 logger.warning(f"Socket health check failed: {e} - forcing reconnect")
@@ -398,13 +417,22 @@ class TCPListener:
                                 logger.info("Watchdog: direct reconnect succeeded")
 
                 # Check if receiver thread is alive
-                if not self.receiver_thread or not self.receiver_thread.is_alive():
-                    logger.critical("Receiver thread is dead!")
+                receiver_stale = False
+                now = time.time()
+                if self.last_receiver_heartbeat and (now - self.last_receiver_heartbeat) > self.receiver_heartbeat_timeout:
+                    receiver_stale = True
+
+                if (not self.receiver_thread or not self.receiver_thread.is_alive()) or receiver_stale:
+                    logger.critical("Receiver thread is dead or stalled - restarting")
+                    # Close socket to unblock any pending operations
+                    self._close_socket()
                     # Try to restart receiver thread
                     if self.running.is_set():
                         logger.info("Attempting to restart receiver thread...")
                         self.receiver_thread = Thread(target=self._receiver_loop, name="TCP-Receiver", daemon=True)
                         self.receiver_thread.start()
+                        # Reset heartbeat timestamp on restart
+                        self.last_receiver_heartbeat = time.time()
 
             except BaseException as fatal:
                 # Prevent watchdog from dying silently
