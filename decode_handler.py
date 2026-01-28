@@ -49,13 +49,9 @@ class DecodeHandler:
         
         try:
             if lib_path is None:
-                # DLL'i ana dizinde ara
+                # DLL'i ana dizindeki libacars klasöründe ara
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                lib_path = os.path.join(script_dir, 'libacars-2.dll')
-                
-                # Ana dizinde yoksa example decoding klasöründe ara
-                if not os.path.exists(lib_path):
-                    lib_path = os.path.join(script_dir, 'example decoding', 'libacars-2.dll')
+                lib_path = os.path.join(script_dir, 'libacars', 'libacars-2.dll')
             
             if not os.path.exists(lib_path):
                 logger.warning(f"libacars DLL bulunamadı: {lib_path}. Decode özelliği devre dışı.")
