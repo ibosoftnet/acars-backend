@@ -358,13 +358,14 @@ Yazılım, TCP ile getirilen ASCII kodlu iletilerden JSON verisini ayrıştırı
   - `ver`: Uygulama sürümü (Uç yazılımda işlevsiz.)
 - `station_id`: İstasyon kimliği (Farklı alıcılara sahip kurulumlarda, alıcılara farklı istasyon kimlikleri atanabilir.)
 - `assstat`: Çok bloklu ACARS iletilerinde, blokların ilişkilendirme durumu (Uç yazılımın rehberine bakınız.)
-- `mode`: ACARS mesaj modu (Subnetwork türü değildir. VDL M0/A, M2 vs. ile karıştırmayın.) (Uç yazılımda işlevsiz.)
-- `label`: ACARS mesaj Label'i
-- `block_id`: ACARS mesaj Blok numarası
-- `ack`: ACARS mesaj ACK bayrağı (true/false)
+- `mode`: ACARS ileti modu (Subnetwork türü değildir. VDL M0/A, M2 vs. ile karıştırmayın.) (Uç yazılımda işlevsiz.)
+- `label`: ACARS ileti Label'i
+  > **NOT:** `_DEL` label'i (DEL ASCII DEL karakteridir, 0x7F) metin kodlama kısıtlamaları nedeniyle `_d` olarak gönderilmelidir.
+- `block_id`: ACARS ileti Blok numarası
+- `ack`: ACARS ileti ACK bayrağı (true/false)
 - `tail`: ARINC 618/620 Aircraft Address (Uçak kuyruk numarası)
-- `text`: ACARS mesaj metin içeriği
-- `msgno`: Downlink mesajları için ARINC 618/620 Downlink Sequence Number (Uç yazılımda işlevsiz.)
+- `text`: ACARS ileti metin içeriği
+- `msgno`: Downlink iletileri için ARINC 618/620 Downlink Sequence Number (Uç yazılımda işlevsiz.)
 - `flight`: ARINC 618/620 Flight Identifier
 
 ### Veritabanı Yapısı:
@@ -414,7 +415,7 @@ Yazılım, TCP bağlantısı koptuğunda veya bağlantı kurulamadığında, kı
 acars-backend/
 ├── main.py                 # Ana uygulama
 ├── database_handler.py     # Veritabanı işlemleri modülü
-├── decode_handler.py       # ACARS mesaj çözücü (libacars sarmalayıcı)
+├── decode_handler.py       # ACARS ileti çözücü (libacars sarmalayıcı)
 ├── tcp_client.py           # TCP istemci modülü
 ├── sse_server.py           # SSE sunucu modülü
 ├── config.ini              # Yapılandırma dosyası
@@ -475,6 +476,7 @@ The software parses JSON data from ASCII-encoded messages received via TCP. An e
 - `assstat`: Association status of blocks in multi-block ACARS messages (See frontend software guide.)
 - `mode`: ACARS message mode (Not a Subnetwork type. Do not confuse with VDL M0/A, M2, etc.) (Non-functional in frontend software.)
 - `label`: ACARS message Label
+  > **NOTE:** The `_DEL` label (DEL is the ASCII DEL character, 0x7F) should be sent as `_d` due to text encoding limitations.
 - `block_id`: ACARS message Block number
 - `ack`: ACARS message ACK flag (true/false)
 - `tail`: ARINC 618/620 Aircraft Address (Aircraft tail number)
