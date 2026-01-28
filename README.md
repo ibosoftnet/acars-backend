@@ -19,7 +19,7 @@ Yazılımın canlı aldığı veya veri tabanına kaydettiği verilerin görünt
 * Windows hizmeti olarak çalıştırılabilir.
 
 **Data Link Yazılımlarımız:**
-* ACARS Frontend
+* ACARS Viewer
 * ACARS Backend
 * ACARS Decoding Library
 * ACARS Tester
@@ -54,7 +54,7 @@ To view the data that the software receives live or stores in the database, it m
 * Can be run as a Windows service.
 
 **Our Data Link Software Series:**
-* ACARS Frontend
+* ACARS Viewer
 * ACARS Backend
 * ACARS Decoding Library
 * ACARS Tester
