@@ -404,7 +404,7 @@ Yazılım, veri tabanında `messages_json_raw` adında bir tablo oluşturur ve i
 * libacars, "SA" Label'li (Media Advisory) iletileri de çözebilmektedir ancak bu Label'li iletilerin çözümlemesi, uç yazılım tarafında Ibosoft Acars Decoding Library ile yapılmaktadır.
 * libacars kütüphanesinin yapısı gereği, kütüphanenin arka yazılıma dahil edilmesi kararı alınmıştır.
 * ARINC 622 uygulamları çözülürken, canlı iletiler için, ileti ACARS ağı iletisi ise ve ileti Label'i AA (CPDLC), BA (CPDLC), A6 (ADS-C), B6 (ADS-C), MA (MIAM), H1 ise ileti arka yazılımda çözülür ve canlı ileti bilgisiyle birlikte uç yazılıma iletilir.
-* Geçmiş iletilerde, uç yazılım doğrudan PHP aracılığıyla veritabanına eriştiği için arka yazılımı doğrudan kullanmaz. ARINC 622 uygulamaları ise arka yazılım tarafında çözümlemesi yapıldığı için, arka yazılıma bir API eklenmiştir. Uç yazılım, geçmiş iletiler için ARINC 622 uygulamalarını çözmek istediğinde, arka yazılıma bir istek gönderir ve arka yazılım iletiyi çözüp sonucu uç yazılıma iletir. Bu işlev için, iletinin ACARS ağı iletisi ve ileti Label'inin AA (CPDLC), BA (CPDLC), A6 (ADS-C), B6 (ADS-C), MA (MIAM), H1 olması gerekmektedir.
+* Geçmiş iletilerde, uç yazılım doğrudan PHP aracılığıyla veritabanına eriştiği için arka yazılımı doğrudan kullanmaz. ARINC 622 uygulamaları ise arka yazılım tarafında çözümlemesi yapıldığı için, arka yazılıma bir API uç noktası eklenmiştir. Uç yazılım, geçmiş iletiler için ARINC 622 uygulamalarını çözmek istediğinde, arka yazılıma bir istek gönderir ve arka yazılım iletiyi çözüp sonucu uç yazılıma iletir. Bu işlev için, iletinin ACARS ağı iletisi ve ileti Label'inin AA (CPDLC), BA (CPDLC), A6 (ADS-C), B6 (ADS-C), MA (MIAM), H1 olması gerekmektedir.
 
 
 ### Yeniden Bağlantı Denemesi:
