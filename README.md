@@ -70,6 +70,10 @@ The source code is publicly available. Use in personal and commercial projects
 is free. The code can be modified; however, the project itself or its modified versions
 cannot be redistributed, published, or offered as a service without explicit permission.
 
+---
+
+# TÜRKÇE KISIM
+
 
 ## Kurulum ve Çalıştırma:
 
@@ -97,7 +101,7 @@ Gerekli ayarları yaptıktan sonra start.bat betik dosyasını çalıştırını
 
 ---
 
-## Installation and Running:
+## Ayarlamalar:
 
 ### Requirements:
 - Windows operating system.
@@ -433,7 +437,10 @@ acars-backend/
 
 ---
 
-## Details About Software Operation:
+# ENGLISH VERSION
+
+
+## Installation and Running:
 
 ### JSON Structure:
 The software parses JSON data from ASCII-encoded messages received via TCP. An example of the expected JSON structure is as follows:
