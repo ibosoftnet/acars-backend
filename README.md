@@ -439,8 +439,132 @@ acars-backend/
 
 # ENGLISH VERSION
 
+---
 
 ## Installation and Running:
+
+### Requirements:
+- Windows operating system.
+- Python 3.x
+- The following additional Python packages:
+  - mysql-connector-python==8.2.0
+  - Flask==3.0.0
+  - Flask-Cors==4.0.0
+
+Python packages can be installed via the requirements.txt file:
+```
+pip install -r requirements.txt
+```
+
+### Installation:
+The software is portable, download and place it in an appropriate directory on the server.
+
+### Running:
+After configuring the necessary settings, run the start.bat script file. You can create a task schedule for automatic startup.
+* The bat script is prepared to run directly as a service. You can add a service that will run the bat file using appropriate commands or a Windows service creation tool like Servy.
+* The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly.
+> NOTE: There are still some issues with connection loss detection, and sometimes the automatic reconnection feature does not work during long-term operations. Therefore, for now, configure the task schedule or service settings so that the task/service is restarted 1-2 times a day.
+
+---
+
+## Configuration:
+
+### Data Link Infrastructure Setup:
+For the software to work, a software that can demodulate and decode data link subnetwork signals and transmit ACARS network messages (ATN network is not currently supported) in appropriate JSON format via TCP server must be installed and running. Additionally, messages from multiple feeders can be collected in a single TCP server via intermediate software and then forwarded to the backend software.
+* To collect data from multiple feeders with different protocols and transmit it to the backend software as a TCP server, you can use this software: [acars_router](https://github.com/sdr-enthusiasts/acars_router)
+  * acars_router should be configured as "TCP server".
+
+Some of the following software does not directly support TCP transmission, but can be used to provide data via acars_router or other relay software.
+
+* For ACARS network decoding via VDL M0/A subnetwork: [acarsdec](https://github.com/f00b4r0/acarsdec)
+* For ACARS network decoding via VDL M2 subnetwork: [vdlm2dec](https://github.com/TLeconte/vdlm2dec)
+* For ACARS network decoding via HFDL subnetwork: [acarshfdl](https://github.com/szpajder/dumphfdl)
+* For ACARS network decoding via INMARSAT Classic Aero subnetwork: [JAERO](https://github.com/jontio/JAERO)
+
+Not yet supported but for ATN network:
+* For ATN network decoding via VDL M2 subnetwork: [dumpvdl2](https://github.com/szpajder/dumpvdl2)
+
+
+### Software Configuration:
+A MySQL-based database server is required for records, and an empty database must be created in it. The required tables will be added to the database by the software.
+
+Settings are made via the config.ini file. The explanations of the settings are as follows:
+
+- [DATABASE]
+  - host = IP address of MySQL-based database server (e.g., localhost)
+  - port = Port number of database server (e.g., 3306)
+  - user = Database username.
+  - password = Database user password.
+  - database = Name of the database to be used.
+- [BACKEND]
+  - host = IP address of the web server for frontend software to connect (e.g., localhost)
+  - port = Port number of the web server for frontend software to connect (e.g., 10002)
+- [LISTENER]
+  - host = IP address of the TCP server that will send messages (e.g., localhost)
+  - port = Port number of the TCP server that will send messages (e.g., 15551)
+  - max_idle_time = Maximum idle time (in seconds) allowed for connection loss detection as a backup, apart from instant connection loss detection. If no new message is received after this time, the reconnection process is initiated. (e.g., 600)
+- [RECORDING]
+  - max_messages = Maximum number of messages to be stored in the database. When this number is reached, the oldest messages are deleted and new messages are recorded. (e.g., 100000)
+- [LOGGING]
+  - max_log_size_mb = Maximum size of the log file (in MB) (e.g., 10)
+  - backup_count = Number of log file backups (e.g., 2)
+- [DECODING]
+  - enabled = true or false. Determines whether backend software functions related to decoding ACARS network ARINC 622 applications are enabled.
+
+### Using Reverse Proxy:
+If the frontend software will be published in an internet environment rather than a local network and you want to use a domain name instead of direct IP access when configuring the frontend software, you can use a Reverse Proxy. With appropriate software (IIS, Nginx, Apache, etc.) and configurations, you can redirect requests from outside with a specific domain name and/or subdomain to the server and port where the backend software is running. When configuring the Reverse Proxy, you must use software that supports SSE (Server-Sent Events) and ensure that SSE requests are properly redirected.
+
+Example Nginx configuration:
+```
+server {
+        listen xxx.xxx.xxx.xxx:2053 ssl;   // IP address and port that nginx will listen to
+        server_name dlink-api.ibosoft.net.tr;    // Domain name to be used for frontend software access
+
+        ssl_certificate     ssl/cert.pem;   // SSL certificate (optional)
+        ssl_certificate_key ssl/key.pem;    // SSL certificate key (optional)
+
+        location ~ ^/error_docs/.*\.htm$ {
+            root ./;
+            internal;
+        }
+
+        // (Optional) To make access from outside the website where you will publish the frontend software more difficult, you can add http_referer control with your own domain name and the domain name you use for backend software access. (e.g., atc.ibosoft.net.tr and dlink-api.ibosoft.net.tr:2053)
+
+        if ($http_referer !~ "^https://(atc\.ibosoft\.net\.tr|dlink-api\.ibosoft\.net\.tr(:2053)?)/") {
+            return 403;
+        }
+
+        // Required settings for SSE requests
+
+        location / {
+            proxy_pass http://127.0.0.1:10002;    // Server and port where the backend software is running ([BACKEND] settings), SSL termination is done with http://
+            proxy_http_version 1.1;
+
+            # Important SSE settings:
+            proxy_set_header Connection '';
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 6h;
+            proxy_send_timeout 60s;
+            tcp_nodelay on;
+
+            # SSE headers
+            add_header Cache-Control no-cache;
+            add_header X-Accel-Buffering no;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+```
+
+### Other Considerations:
+* You can use Cloudflare proxy service along with Reverse Proxy. To benefit from the proxy service on Cloudflare's free plan, one of the supported ports must be used. For example, 443 (default https port), 2053, 2083, 2087, 2096, or 8443 ports can be used. Port 2053 is used in the Reverse Proxy example.
+
+---
+
+## Details About Software Operation:
 
 ### JSON Structure:
 The software parses JSON data from ASCII-encoded messages received via TCP. An example of the expected JSON structure is as follows:
