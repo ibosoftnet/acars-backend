@@ -24,7 +24,8 @@ Yazılımın canlı aldığı veya veri tabanına kaydettiği verilerin görünt
 * ACARS Decoding Library
 * ACARS Tester
 
-Havacılık iletişim ve data link sistemleri hakkında daha fazla bilgi için: https://egitim.ibosoft.net.tr/
+> Havacılık iletişim ve data link sistemleri hakkında daha fazla bilgi için: https://egitim.ibosoft.net.tr/  
+> Projede kullanılan kısaltmalar için bakınız: [Ibosoft Kısaltmalar Veri Tabanı](https://egitim.ibosoft.net.tr/abbreviations-database/)
 
 **Lisans:**
 
@@ -58,7 +59,8 @@ To view the data that the software receives live or stores in the database, it m
 * ACARS Decoding Library
 * ACARS Tester
 
-For more information about aviation communication and data link systems: https://egitim.ibosoft.net.tr/
+> For more information about aviation communication and data link systems: https://egitim.ibosoft.net.tr/  
+> For abbreviations used in the project, see: [Ibosoft Abbreviations Database](https://egitim.ibosoft.net.tr/abbreviations-database/)
 
 **License:**
 
@@ -73,6 +75,7 @@ cannot be redistributed, published, or offered as a service without explicit per
 
 ### Gereklilikler:
 - Windows işletim sistemi.
+- Python 3.x
 - Şu ek python paketleri:
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
@@ -98,6 +101,7 @@ Gerekli ayarları yaptıktan sonra start.bat betik dosyasını çalıştırını
 
 ### Requirements:
 - Windows operating system.
+- Python 3.x
 - The following additional Python packages:
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
