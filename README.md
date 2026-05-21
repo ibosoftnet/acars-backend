@@ -79,22 +79,32 @@ cannot be redistributed, published, or offered as a service without explicit per
 
 ### Gereklilikler:
 - Windows işletim sistemi.
-- Python 3.x
-- Şu ek python paketleri:
+- Python 3.x (sistem PATH'inde `python` ile erişilebilir olmalı)
+- Şu ek python paketleri (requirements.txt üzerinden otomatik kurulur):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
   - Flask-Cors==4.0.0
-
-Python paketleri, requirements.txt dosyası aracılığıyla yüklenebilir:
-```
-pip install -r requirements.txt
-```
+  - PyJWT==2.8.0
 
 ### Kurulum:
 Yazılım taşınabilirdir, indirip sunucuda uygun bir dizine yerleştiriniz.
 
+İlk kurulumda (ve `requirements.txt` her güncellendiğinde) sanal ortam (`venv`) kurmak için yazılım dizinindeki `install-venv.bat` dosyasını bir kez çalıştırınız:
+
+```
+install-venv.bat
+```
+
+Bu betik:
+1. Yoksa `.\venv\` altında izole bir Python sanal ortamı oluşturur.
+2. Bu sanal ortamın içindeki `pip`'i günceller.
+3. `requirements.txt` içindeki tüm paketleri sanal ortama kurar.
+
+Sistem genelindeki Python kurulumu kirletilmez; bağımlılıklar yalnızca bu projeye ait `venv` dizininde yaşar. `venv/` dizini `.gitignore`'da olduğundan repo'ya commit edilmez.
+
 ### Çalıştırma:
-Gerekli ayarları yaptıktan sonra start.bat betik dosyasını çalıştırınız. Kendiliğinden çalıştırma için bir görev zamanlaması oluşturabilirsiniz.
+Gerekli ayarları yaptıktan sonra `start.bat` betik dosyasını çalıştırınız. Kendiliğinden çalıştırma için bir görev zamanlaması oluşturabilirsiniz.
+* `start.bat`, sanal ortamdaki Python (`venv\Scripts\python.exe`) ile `main.py`'yi çalıştırır. Sanal ortam yoksa hata verir ve `install-venv.bat`'in çalıştırılması gerektiğini bildirir.
 * Bat betiği, doğrudan hizmet olarak çalıştırmaya uygun hazırlanmıştır. Uygun komutlar veya Servy gibi bir Windows hizmeti oluşturma aracı ile bat dosyasını çalıştıracak bir hizmet ekleyebilirsiniz.
 * Bat betiği, herhangi bir dizinden başlatıldığında bulunduğu dizini çalışma dizini olarak ayarlamaktadır. Bu yüzden, görev zamanlamasında veya hizmet ayarlarında, çalışma dizini olarak yazılımın bulunduğu dizin ayarlanmasa bile yazılım doğru şekilde çalışacaktır.
 > NOT: Henüz bağlantı kopukluğu tespitinde bazı sorunlar bulunmaktadır ve uzun süreli çalışmalarda bazen kendiliğinden yeniden bağlanma özelliği çalışmamaktadır. Bu yüzden görev zamanlamasını veya hizmet ayarlarını, şimdilik görevin/hizmetin günde 1-2 kere yeniden başlatılacağı şekilde yapınız.
@@ -105,22 +115,32 @@ Gerekli ayarları yaptıktan sonra start.bat betik dosyasını çalıştırını
 
 ### Requirements:
 - Windows operating system.
-- Python 3.x
-- The following additional Python packages:
+- Python 3.x (must be reachable as `python` on the system PATH).
+- The following additional Python packages (installed automatically through `requirements.txt`):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
   - Flask-Cors==4.0.0
-
-Python packages can be installed via the requirements.txt file:
-```
-pip install -r requirements.txt
-```
+  - PyJWT==2.8.0
 
 ### Installation:
 The software is portable, download and place it in an appropriate directory on the server.
 
+On first checkout (and whenever `requirements.txt` is updated), run the `install-venv.bat` script in the software directory once to set up a virtual environment:
+
+```
+install-venv.bat
+```
+
+This script:
+1. Creates an isolated Python virtual environment under `.\venv\` if one does not already exist.
+2. Upgrades `pip` inside that virtual environment.
+3. Installs every package listed in `requirements.txt` into the virtual environment.
+
+The system-wide Python installation is left untouched; the dependencies live only inside this project's `venv` directory. `venv/` is included in `.gitignore`, so it is never committed to the repository.
+
 ### Running:
-After configuring the necessary settings, run the start.bat script file. You can create a task schedule for automatic startup.
+After configuring the necessary settings, run the `start.bat` script file. You can create a task schedule for automatic startup.
+* `start.bat` runs `main.py` using the virtual environment's Python (`venv\Scripts\python.exe`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.bat` first.
 * The bat script is prepared to run directly as a service. You can add a service that will run the bat file using appropriate commands or a Windows service creation tool like Servy.
 * The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly.
 > NOTE: There are still some issues with connection loss detection, and sometimes the automatic reconnection feature does not work during long-term operations. Therefore, for now, configure the task schedule or service settings so that the task/service is restarted 1-2 times a day.
@@ -504,7 +524,8 @@ acars-backend/
 ├── acars_datis_api.py      # ACARS D-ATIS API modülü (son DEP/ARR ATIS sorgulama)
 ├── config.ini              # Yapılandırma dosyası
 ├── requirements.txt        # Python bağımlılıkları
-├── start.bat               # Windows başlatma betiği
+├── install-venv.bat        # Sanal ortamı (venv) kuran ve bağımlılıkları yükleyen ilk kurulum betiği
+├── start.bat               # Windows başlatma betiği (sanal ortamdaki python ile çalıştırır)
 ├── LICENSE                 # Lisans dosyası
 ├── README.md               # Bu dosya
 ├── SSE_MIGRATION.md        # SSE geçiş dokümantasyonu
@@ -525,22 +546,32 @@ acars-backend/
 
 ### Requirements:
 - Windows operating system.
-- Python 3.x
-- The following additional Python packages:
+- Python 3.x (must be reachable as `python` on the system PATH).
+- The following additional Python packages (installed automatically through `requirements.txt`):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
   - Flask-Cors==4.0.0
-
-Python packages can be installed via the requirements.txt file:
-```
-pip install -r requirements.txt
-```
+  - PyJWT==2.8.0
 
 ### Installation:
 The software is portable, download and place it in an appropriate directory on the server.
 
+On first checkout (and whenever `requirements.txt` is updated), run the `install-venv.bat` script in the software directory once to set up a virtual environment:
+
+```
+install-venv.bat
+```
+
+This script:
+1. Creates an isolated Python virtual environment under `.\venv\` if one does not already exist.
+2. Upgrades `pip` inside that virtual environment.
+3. Installs every package listed in `requirements.txt` into the virtual environment.
+
+The system-wide Python installation is left untouched; the dependencies live only inside this project's `venv` directory. `venv/` is included in `.gitignore`, so it is never committed to the repository.
+
 ### Running:
-After configuring the necessary settings, run the start.bat script file. You can create a task schedule for automatic startup.
+After configuring the necessary settings, run the `start.bat` script file. You can create a task schedule for automatic startup.
+* `start.bat` runs `main.py` using the virtual environment's Python (`venv\Scripts\python.exe`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.bat` first.
 * The bat script is prepared to run directly as a service. You can add a service that will run the bat file using appropriate commands or a Windows service creation tool like Servy.
 * The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly.
 > NOTE: There are still some issues with connection loss detection, and sometimes the automatic reconnection feature does not work during long-term operations. Therefore, for now, configure the task schedule or service settings so that the task/service is restarted 1-2 times a day.
@@ -817,7 +848,8 @@ acars-backend/
 ├── acars_datis_api.py      # ACARS D-ATIS API module (latest DEP/ARR ATIS lookup)
 ├── config.ini              # Configuration file
 ├── requirements.txt        # Python dependencies
-├── start.bat               # Windows startup script
+├── install-venv.bat        # First-time setup script: creates the venv and installs dependencies
+├── start.bat               # Windows startup script (runs main.py via the venv's python)
 ├── LICENSE                 # License file
 ├── README.md               # This file
 ├── SSE_MIGRATION.md        # SSE migration documentation

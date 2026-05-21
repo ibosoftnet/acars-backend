@@ -5,7 +5,19 @@
 
 # Configuration files with sensitive data
 
-# Python
+# ----------------------------------------------------------------
+# Virtual environments (created by install-venv.bat)
+# ----------------------------------------------------------------
+venv/
+.venv/
+ENV/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ----------------------------------------------------------------
+# Python build / cache artifacts
+# ----------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,29 +29,24 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
-var/
 wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Virtual environments
-venv/
-ENV/
-env/
-.venv
-
+# ----------------------------------------------------------------
 # IDE
+# ----------------------------------------------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
+# ----------------------------------------------------------------
 # OS
+# ----------------------------------------------------------------
 .DS_Store
 Thumbs.db
