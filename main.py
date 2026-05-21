@@ -15,6 +15,7 @@ from database_handler import DatabaseHandler
 from tcp_client import TCPListener
 from sse_server import SSEServer
 from decode_handler import DecodeHandler
+from acars_datis_api import AcarsDatisAPI
 
 # Configure logging - will be reconfigured after loading config
 logging.basicConfig(
@@ -44,6 +45,8 @@ class ATCDatalinkBackend:
         self.tcp_client = None
         self.sse_server = None
         self.decode_handler = None
+        self.acars_datis_api = None
+        self._sec = {}
         self.running = False
         
     def load_config(self):
@@ -152,7 +155,8 @@ class ATCDatalinkBackend:
                 host=backend_host,
                 port=backend_port,
                 max_history_messages=100,  # Backend'de saklanacak history sayısı
-                decode_handler=self.decode_handler  # Decode handler'i geç
+                decode_handler=self.decode_handler,  # Decode handler'i geç
+                **self._sec,
             )
             
             # Start server
@@ -192,6 +196,81 @@ class ATCDatalinkBackend:
             logger.error(f"Error initializing decode handler: {e}")
             return False
     
+    def _load_security_config(self):
+        """Read [SECURITY] settings and return kwargs for server constructors.
+
+        Returns an empty dict (auth disabled) when the section is missing,
+        explicitly disabled, or no auth material is configured.
+        """
+        if not self.config.has_section('SECURITY'):
+            logger.info("SECURITY section not in config; auth disabled")
+            return {}
+        if not self.config.getboolean('SECURITY', 'enabled', fallback=False):
+            logger.info("Auth disabled by config")
+            return {}
+        from auth_helper import parse_api_keys
+        api_keys = parse_api_keys(
+            self.config.get('SECURITY', 'api_keys', fallback='')
+        )
+        jwt_secret = self.config.get('SECURITY', 'jwt_secret', fallback='') or None
+        jwt_cookie_name = self.config.get(
+            'SECURITY', 'jwt_cookie_name', fallback='datalink_session'
+        )
+        if not api_keys and not jwt_secret:
+            logger.warning(
+                "[SECURITY] enabled but no api_keys or jwt_secret; auth effectively disabled"
+            )
+            return {}
+        logger.info(
+            f"Auth enabled ({len(api_keys)} static keys, "
+            f"jwt_secret={'set' if jwt_secret else 'unset'}, "
+            f"cookie={jwt_cookie_name})"
+        )
+        return {
+            'api_keys': api_keys,
+            'jwt_secret': jwt_secret,
+            'jwt_cookie_name': jwt_cookie_name,
+        }
+
+    def initialize_acars_datis_api(self):
+        """Initialize the ACARS D-ATIS API (optional, external-facing)."""
+        try:
+            if not self.config.has_section('ACARS_DATIS_API'):
+                logger.info("ACARS_DATIS_API section not in config; module disabled")
+                self.acars_datis_api = None
+                return True
+
+            enabled = self.config.getboolean('ACARS_DATIS_API', 'enabled', fallback=False)
+            if not enabled:
+                logger.info("ACARS D-ATIS API disabled by config")
+                self.acars_datis_api = None
+                return True
+
+            host = self.config.get('ACARS_DATIS_API', 'host', fallback='0.0.0.0')
+            port = self.config.getint('ACARS_DATIS_API', 'port', fallback=10012)
+            max_per_type = self.config.getint(
+                'ACARS_DATIS_API', 'max_count_per_type', fallback=5
+            )
+
+            self.acars_datis_api = AcarsDatisAPI(
+                db_handler=self.db_handler,
+                host=host,
+                port=port,
+                max_count_per_type=max_per_type,
+                **self._sec,
+            )
+
+            if not self.acars_datis_api.start():
+                logger.error("Failed to start ACARS D-ATIS API")
+                return False
+
+            logger.info("ACARS D-ATIS API initialized successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error initializing ACARS D-ATIS API: {e}")
+            return False
+
     def initialize_tcp_client(self):
         """Initialize TCP client for receiving messages"""
         try:
@@ -286,7 +365,10 @@ class ATCDatalinkBackend:
         if not self.load_config():
             logger.error("Failed to load configuration")
             return False
-        
+
+        # Load security/auth config once; both servers get the same kwargs.
+        self._sec = self._load_security_config()
+
         # Initialize database
         if not self.initialize_database():
             logger.error("Failed to initialize database")
@@ -301,7 +383,12 @@ class ATCDatalinkBackend:
         if not self.initialize_sse_server():
             logger.error("Failed to initialize SSE server")
             return False
-        
+
+        # Initialize ACARS D-ATIS API (optional)
+        if not self.initialize_acars_datis_api():
+            logger.error("Failed to initialize ACARS D-ATIS API")
+            return False
+
         # Initialize TCP client
         if not self.initialize_tcp_client():
             logger.error("Failed to initialize TCP client")
@@ -362,7 +449,11 @@ class ATCDatalinkBackend:
         # Stop SSE server
         if self.sse_server:
             self.sse_server.stop()
-        
+
+        # Stop ACARS D-ATIS API
+        if self.acars_datis_api:
+            self.acars_datis_api.stop()
+
         # Close database connection
         if self.db_handler:
             self.db_handler.close()

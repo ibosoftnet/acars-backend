@@ -170,6 +170,16 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
   - backup_count = Log dosyası yedek sayısı (Ör: 2)
 - [DECODING]
   - enabled = true veya false. ACARS ağı ARINC 622 uygulamalarının çözülmesi ile ilgili arka yazılım işlevlerinin etkinleştirilip etkinleştirilmeyeceğini belirler.
+- [ACARS_DATIS_API]
+  - enabled = true veya false. Harici uygulamaların ICAO location indicator belirterek son DEP/ARR D-ATIS iletilerini sorgulayabilmesi için ACARS D-ATIS API modülünün etkinleştirilip etkinleştirilmeyeceğini belirler.
+  - host = ACARS D-ATIS API sunucusunun IP adresi (Ör: 0.0.0.0).
+  - port = ACARS D-ATIS API sunucusunun port numarası (Ör: 10012). Mevcut [BACKEND] portu ile çakışmamalıdır.
+  - max_count_per_type = Tek bir API çağrısında DEP veya ARR tipi başına döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değere clamp edilir. (Ör: 5)
+- [SECURITY]
+  - enabled = true veya false. /stream, /decode ve /acars-datis endpoint'lerinde bağlanma anı kimlik doğrulamasının etkinleştirilip etkinleştirilmeyeceğini belirler. /health endpoint'leri her durumda muaftır.
+  - api_keys = Virgülle ayrılmış statik API key listesi. Harici (server-to-server) tüketiciler bu key'i `X-API-Key` HTTP header'ında gönderir. Browser tarafından kullanılmaz; tarayıcıya hiç inmez.
+  - jwt_secret = atcweb tarafından üretilen oturum JWT'lerinin doğrulandığı paylaşılan HS256 anahtarı. atcweb `.htaccess`'teki `DATALINK_JWT_SECRET` ile aynı olmalıdır.
+  - jwt_cookie_name = Browser tarafından otomatik gönderilen JWT'nin taşındığı çerez adı (varsayılan: `datalink_session`).
 
 ### Reverse Proxy Kullanımı:
 Uç yazılım, yerel ağda değil de internet ortamında yayınlanacaksa ve de uç yazılımı ayarlarken doğrudan IP erişimi yerine alan adı kullanmak istiyorsanız Reverse Proxy kullanabilirsiniz. Uygun bir yazılım (IIS, Nginx, Apache vb.) ve ayarlamalar ile, dışarıdan belirli bir domain adı ve/veya alt alan adı ile gelen istekleri, arka yazılımın çalıştığı sunucu ve porta yönlendirebilirsiniz. Reverse Proxy ayarlanırken, SSE (Server-Sent Events) desteği olan bir yazılım kullanmanız ve SSE isteklerinin doğru şekilde yönlendirildiğinden emin olmanız gerekmektedir.
@@ -267,6 +277,16 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - backup_count = Number of log file backups (e.g., 2)
 - [DECODING]
   - enabled = true or false. Determines whether backend software functions related to decoding ACARS network ARINC 622 applications are enabled.
+- [ACARS_DATIS_API]
+  - enabled = true or false. Determines whether the ACARS D-ATIS API module is enabled. This module lets external applications fetch the most recent DEP/ARR D-ATIS messages for a given ICAO location indicator, searched within ACARS-network traffic (label B9).
+  - host = IP address of the ACARS D-ATIS API server (e.g., 0.0.0.0).
+  - port = Port number of the ACARS D-ATIS API server (e.g., 10012). Must not conflict with the [BACKEND] port.
+  - max_count_per_type = Maximum number of messages a single API call may return per type (dep, arr). The caller-supplied `count` is clamped to this value. (e.g., 5)
+- [SECURITY]
+  - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-datis endpoints. /health endpoints are always exempt.
+  - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
+  - jwt_secret = Shared HS256 secret used to verify session JWTs issued by atcweb. Must match `DATALINK_JWT_SECRET` set in atcweb's `.htaccess`.
+  - jwt_cookie_name = Cookie name carrying the JWT (default: `datalink_session`). Sent automatically by the browser.
 
 ### Using Reverse Proxy:
 If the frontend software will be published in an internet environment rather than a local network and you want to use a domain name instead of direct IP access when configuring the frontend software, you can use a Reverse Proxy. With appropriate software (IIS, Nginx, Apache, etc.) and configurations, you can redirect requests from outside with a specific domain name and/or subdomain to the server and port where the backend software is running. When configuring the Reverse Proxy, you must use software that supports SSE (Server-Sent Events) and ensure that SSE requests are properly redirected.
@@ -372,6 +392,65 @@ Yazılım, TCP ile getirilen ASCII kodlu iletilerden JSON verisini ayrıştırı
 - `msgno`: Downlink iletileri için ARINC 618/620 Downlink Sequence Number (Uç yazılımda işlevsiz.)
 - `flight`: ARINC 618/620 Flight Identifier
 
+### ACARS D-ATIS API:
+Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç sistemler) belirli bir havalimanı için son DEP ve/veya ARR D-ATIS iletilerini ICAO location indicator ile sorgulayabilmesi için tasarlanmıştır. Frontend için kullanılan SSE akışından (`/stream`) farklı olarak bu modül pull stilinde çalışır: harici tüketici tek bir HTTP isteği ile belirli bir ICAO için en yeni N adet DEP ve/veya ARR D-ATIS mesajını alır. Erişim yalnızca ACARS network trafiği (`app.name` ∈ `acarsdec`, `vdlm2dec`, `jaero`, `dumphfdl`) ve `B9` label'ı ile sınırlandırılmıştır; CPDLC, ATN vb. diğer network mesajları sonuç dışında tutulur. İhtiyaç duyulmayan kurulumlarda config üzerinden kapatılabilir.
+
+**Endpoint'ler:**
+
+- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Belirtilen ICAO için talep edilen tipler (DEP, ARR ya da her ikisi) bazında son N adet D-ATIS iletisini JSON olarak döner. `count`, config'deki `max_count_per_type` değerine clamp edilir.
+- `GET /acars-datis/health` — Modülün durumunu, `max_count_per_type` değerini ve kabul edilen ACARS `app_name` listesini döner.
+
+**Query parametreleri:**
+
+| Parametre | Zorunlu | Format | Açıklama |
+|---|---|---|---|
+| `icao` | Evet | 4 harf (A–Z, küçük/büyük harf duyarsız; uppercase'e normalize edilir) | Havalimanı ICAO kodu |
+| `type` | Hayır (varsayılan `dep,arr`) | `dep`, `arr` ya da `dep,arr` (sıra önemsiz) | Hangi ATIS türleri istenir |
+| `count` | Hayır (varsayılan `1`) | 1 ≤ N ≤ `max_count_per_type` | Her tipten kaç mesaj döneceği |
+
+**Veri kaynağı ve eşleşme deseni:** ACARS network D-ATIS iletilerinin metni genellikle şu desenle başlar:
+
+```
+/ESBDTYA.TI2/LTAI DEP ATIS S 1030Z ...
+/ISTATYA.TI2/LTFM ARR ATIS Z 1100Z ...
+```
+
+Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]ATIS[ -]` desenine göre arar (REGEXP). DEP/ARR ile ATIS arasındaki ve ICAO ile DEP/ARR arasındaki ayraç **boşluk ya da tire** olabilir; her iki varyant da eşleşir.
+
+**Yanıt JSON yapısı örneği** (`/acars-datis?icao=LTFM&type=dep,arr&count=3`):
+
+```json
+{
+  "icao": "LTFM",
+  "count": 3,
+  "dep": [
+    { "timestamp": 1760840065.479974, "text": "/ESBDTYA.TI2/LTFM DEP ATIS S ..." },
+    { "timestamp": 1760830000.0,      "text": "/ESBDTYA.TI2/LTFM DEP ATIS R ..." }
+  ],
+  "arr": [
+    { "timestamp": 1760830500.0,      "text": "/ISTATYA.TI2/LTFM ARR ATIS Z ..." }
+  ]
+}
+```
+
+- Talep edilen tipler için yanıtta her zaman bir dizi alanı yer alır; o tipte mesaj bulunamamışsa `[]` döner.
+- Talep edilmeyen tip yanıtta hiç görünmez (örn. `type=dep` sorgusunda yanıtta `arr` alanı bulunmaz).
+- `count` alanı, çağıranın istediği değerin (clamp sonrası) efektif tavanını yansıtır.
+- Mesajlar `timestamp` alanına göre azalan (en yeni üstte) sıralanır.
+
+### Bağlantı Düzeyinde Kimlik Doğrulama:
+Arka yazılım, `/stream`, `/decode` ve `/acars-datis` endpoint'lerinde **bağlanma anında** kimlik doğrulaması yapar; bağlantı bir kez kurulduktan sonra mesaj akışı sırasında ek doğrulama yapılmaz. `/health` endpoint'leri her durumda korumadan muaftır. Yapılandırma `[SECURITY]` bölümünden yapılır; `enabled = false` ile geçiş/dev için tamamen devre dışı bırakılabilir.
+
+İki kabul kanalı vardır:
+
+1. **`X-API-Key` HTTP header'ı (harici uygulamalar için):** Sunucudan sunucuya çağıran harici uygulamalar, `[SECURITY].api_keys` listesindeki statik bir anahtarı bu header ile gönderir. Anahtar tarayıcıya hiç inmez; uygulamanın kendi yapılandırmasında saklı kalır.
+
+2. **`datalink_session` çerezi içinde HS256 JWT (tarayıcı için):** Statik anahtar tarayıcıya inmediği için, atcweb PHP'si oturum açmış kullanıcıya **kısa ömürlü (8 saat)** bir JWT üretir ve `HttpOnly + Secure + SameSite=None + Domain=.ibosoft.net.tr` özellikli bir çerez olarak set eder. Tarayıcı bu çerezi `dlink-api.ibosoft.net.tr` alt alan adına otomatik olarak gönderir. Arka yazılım, çerezdeki JWT'nin imzasını `[SECURITY].jwt_secret` ile doğrular ve süre dolma kontrolü yapar. Statik anahtarın kendisi tarayıcıya, JavaScript'e, URL'ye veya HTML kaynağına hiçbir şekilde yazılmaz; tarayıcıda yalnızca oturuma özel, süresi dolan JWT bulunur.
+
+Geçersiz/eksik kimlik bilgisinde arka yazılım `401 Unauthorized` + `{"error":"unauthorized"}` döner. SSE bağlantısı bir kez kurulduktan sonra JWT süresi dolsa bile akış kesilmez; yalnızca yeniden bağlanma denemesi sırasında yeni bir JWT gerekir (kullanıcı sayfayı yenilediğinde atcweb yeni bir JWT üretir).
+
+JWT imzalamak için kullanılan statik anahtar, atcweb tarafında `.htaccess` `SetEnv DATALINK_JWT_SECRET` ile, arka yazılım tarafında `config.ini` `[SECURITY].jwt_secret` ile tanımlıdır; iki değer **birebir aynı** olmak zorundadır.
+
 ### Veritabanı Yapısı:
 Yazılım, veri tabanında `messages_json_raw` adında bir tablo oluşturur ve iletileri bu tabloya kaydeder. Tablo yapısı, JSON yapısı ile uyumlu olacak şekilde ayarlanmıştır ve aşağıdaki gibidir:
 
@@ -422,6 +501,7 @@ acars-backend/
 ├── decode_handler.py       # ACARS ileti çözücü (libacars sarmalayıcı)
 ├── tcp_client.py           # TCP istemci modülü
 ├── sse_server.py           # SSE sunucu modülü
+├── acars_datis_api.py      # ACARS D-ATIS API modülü (son DEP/ARR ATIS sorgulama)
 ├── config.ini              # Yapılandırma dosyası
 ├── requirements.txt        # Python bağımlılıkları
 ├── start.bat               # Windows başlatma betiği
@@ -510,6 +590,16 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - backup_count = Number of log file backups (e.g., 2)
 - [DECODING]
   - enabled = true or false. Determines whether backend software functions related to decoding ACARS network ARINC 622 applications are enabled.
+- [ACARS_DATIS_API]
+  - enabled = true or false. Determines whether the ACARS D-ATIS API module is enabled. This module lets external applications fetch the most recent DEP/ARR D-ATIS messages for a given ICAO location indicator, searched within ACARS-network traffic (label B9).
+  - host = IP address of the ACARS D-ATIS API server (e.g., 0.0.0.0).
+  - port = Port number of the ACARS D-ATIS API server (e.g., 10012). Must not conflict with the [BACKEND] port.
+  - max_count_per_type = Maximum number of messages a single API call may return per type (dep, arr). The caller-supplied `count` is clamped to this value. (e.g., 5)
+- [SECURITY]
+  - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-datis endpoints. /health endpoints are always exempt.
+  - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
+  - jwt_secret = Shared HS256 secret used to verify session JWTs issued by atcweb. Must match `DATALINK_JWT_SECRET` set in atcweb's `.htaccess`.
+  - jwt_cookie_name = Cookie name carrying the JWT (default: `datalink_session`). Sent automatically by the browser.
 
 ### Using Reverse Proxy:
 If the frontend software will be published in an internet environment rather than a local network and you want to use a domain name instead of direct IP access when configuring the frontend software, you can use a Reverse Proxy. With appropriate software (IIS, Nginx, Apache, etc.) and configurations, you can redirect requests from outside with a specific domain name and/or subdomain to the server and port where the backend software is running. When configuring the Reverse Proxy, you must use software that supports SSE (Server-Sent Events) and ensure that SSE requests are properly redirected.
@@ -615,6 +705,65 @@ The software parses JSON data from ASCII-encoded messages received via TCP. An e
 - `msgno`: ARINC 618/620 Downlink Sequence Number for downlink messages (Non-functional in frontend software.)
 - `flight`: ARINC 618/620 Flight Identifier
 
+### ACARS D-ATIS API:
+This module is designed to let external applications (third-party tools, integrations, other internal systems) query the most recent DEP and/or ARR D-ATIS messages for a given airport ICAO. Unlike the SSE stream (`/stream`) used by the frontend, this module is pull-style: a single HTTP request returns up to N DEP and/or ARR messages, newest first. Access is restricted to ACARS-network traffic (`app.name` ∈ `acarsdec`, `vdlm2dec`, `jaero`, `dumphfdl`) and the `B9` label; CPDLC, ATN and other non-ACARS messages are excluded. The module can be disabled via config in deployments that do not need it.
+
+**Endpoints:**
+
+- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Returns up to N D-ATIS messages for the requested types (DEP, ARR or both) for the given ICAO. `count` is clamped to `max_count_per_type` from the config.
+- `GET /acars-datis/health` — Returns the module status, the `max_count_per_type` value and the list of accepted ACARS `app_name` values.
+
+**Query parameters:**
+
+| Parameter | Required | Format | Description |
+|---|---|---|---|
+| `icao` | Yes | 4 letters (A–Z, case-insensitive; normalised to uppercase) | Airport ICAO code |
+| `type` | No (default `dep,arr`) | `dep`, `arr` or `dep,arr` (order does not matter) | Which ATIS directions to return |
+| `count` | No (default `1`) | 1 ≤ N ≤ `max_count_per_type` | How many messages per type |
+
+**Data source and match pattern:** D-ATIS messages on the ACARS network typically begin with a pattern such as:
+
+```
+/ESBDTYA.TI2/LTAI DEP ATIS S 1030Z ...
+/ISTATYA.TI2/LTFM ARR ATIS Z 1100Z ...
+```
+
+The backend searches with a REGEXP of the form `/<ICAO>[ -]DEP[ -]ATIS[ -]` or `/<ICAO>[ -]ARR[ -]ATIS[ -]`. The separator between ICAO, direction (DEP/ARR) and the literal `ATIS` may be **either a space or a hyphen**; all variants are matched.
+
+**Example JSON response** (`/acars-datis?icao=LTFM&type=dep,arr&count=3`):
+
+```json
+{
+  "icao": "LTFM",
+  "count": 3,
+  "dep": [
+    { "timestamp": 1760840065.479974, "text": "/ESBDTYA.TI2/LTFM DEP ATIS S ..." },
+    { "timestamp": 1760830000.0,      "text": "/ESBDTYA.TI2/LTFM DEP ATIS R ..." }
+  ],
+  "arr": [
+    { "timestamp": 1760830500.0,      "text": "/ISTATYA.TI2/LTFM ARR ATIS Z ..." }
+  ]
+}
+```
+
+- Requested types always appear as an array in the response; when there is no match for a type, the array is empty (`[]`).
+- Types that were not requested do not appear in the response (e.g. `type=dep` produces a response with no `arr` field).
+- The `count` field reflects the effective per-type cap after clamping.
+- Messages are sorted by `timestamp` in descending order (newest first).
+
+### Connection-level Authentication:
+The backend authenticates **at connection establishment** for the `/stream`, `/decode` and `/acars-datis` endpoints; once a connection is open no per-message check is performed. The `/health` endpoints are always exempt. Configuration lives in the `[SECURITY]` section; setting `enabled = false` disables the check entirely (useful for migrations or local development).
+
+Two credential channels are accepted:
+
+1. **`X-API-Key` HTTP header (external applications):** Server-to-server callers send a static key from the `[SECURITY].api_keys` list in this header. The static key never reaches a browser; it stays in the caller application's own configuration.
+
+2. **HS256 JWT inside the `datalink_session` cookie (browsers):** Because the static key must not be exposed to the browser, atcweb's PHP issues a **short-lived (8 hours)** JWT for an authenticated user and stores it in an `HttpOnly + Secure + SameSite=None + Domain=.ibosoft.net.tr` cookie. The browser automatically attaches this cookie when contacting `dlink-api.ibosoft.net.tr`. The backend verifies the JWT signature with `[SECURITY].jwt_secret` and checks the expiry. The static key itself is never written to the browser, to JavaScript, to URLs or to the HTML source — the browser only ever carries the per-session, expiring JWT.
+
+When the credential is missing or invalid the backend responds with `401 Unauthorized` + `{"error":"unauthorized"}`. Once an SSE connection is open, expiry of the underlying JWT does not break the stream; a fresh JWT is required only on reconnect (reloading the page in atcweb mints a new one).
+
+The static secret used to sign JWTs is defined in atcweb's `.htaccess` (`SetEnv DATALINK_JWT_SECRET`) and in the backend's `config.ini` (`[SECURITY].jwt_secret`). The two values **must match exactly**.
+
 ### Database Structure:
 The software creates a table named `messages_json_raw` in the database and records messages to this table. The table structure is configured to be compatible with the JSON structure and is as follows:
 
@@ -665,6 +814,7 @@ acars-backend/
 ├── decode_handler.py       # ACARS message decoder (libacars wrapper)
 ├── tcp_client.py           # TCP client module
 ├── sse_server.py           # SSE server module
+├── acars_datis_api.py      # ACARS D-ATIS API module (latest DEP/ARR ATIS lookup)
 ├── config.ini              # Configuration file
 ├── requirements.txt        # Python dependencies
 ├── start.bat               # Windows startup script

@@ -18,16 +18,20 @@ logger = logging.getLogger(__name__)
 class SSEServer:
     """Handles SSE connections and message broadcasting"""
     
-    def __init__(self, host, port, max_history_messages=100, decode_handler=None):
+    def __init__(self, host, port, max_history_messages=100, decode_handler=None,
+                 api_keys=None, jwt_secret=None, jwt_cookie_name='datalink_session'):
         """
         Initialize SSE server
-        
+
         Args:
             host (str): IP address to bind to
             port (int): Port to listen on
             max_history_messages (int): Maximum history messages to keep in backend
                                        (Frontend decides how many to display)
             decode_handler: DecodeHandler instance for ACARS decoding
+            api_keys (iterable[str] | None): Static keys accepted via X-API-Key header.
+            jwt_secret (str | None): HS256 secret for verifying browser JWT cookies.
+            jwt_cookie_name (str): Cookie name carrying the JWT.
         """
         self.host = host
         self.port = port
@@ -36,16 +40,26 @@ class SSEServer:
         self.clients = {}  # Dictionary to store client queues
         self.recent_messages = []
         self.app = Flask(__name__)
-        CORS(self.app)  # Enable CORS for all routes
+        CORS(self.app, supports_credentials=True)  # Enable CORS; allow cookies cross-site
         self.server = None
         self.thread = None
         self.running = Event()
         self.client_lock = Lock()
         self.client_id_counter = 0
         self.tcp_status_callback = None  # Callback to get TCP connection status
-        
+
         # Setup Flask routes
         self._setup_routes()
+
+        # Install connection-level auth (X-API-Key header or JWT cookie)
+        if api_keys or jwt_secret:
+            from auth_helper import make_auth_validator
+            self.app.before_request(make_auth_validator(
+                api_keys=api_keys,
+                jwt_secret=jwt_secret,
+                jwt_cookie_name=jwt_cookie_name,
+                exempt_paths={'/health'},
+            ))
         
     def _setup_routes(self):
         """Setup Flask routes"""
@@ -53,6 +67,8 @@ class SSEServer:
         @self.app.route('/stream')
         def stream():
             """SSE endpoint for streaming messages"""
+            # CORS headers are added by flask_cors (with supports_credentials=True);
+            # do not hardcode Access-Control-* here — '*' would conflict with credentials.
             return Response(
                 self._event_stream(),
                 mimetype='text/event-stream',
@@ -60,9 +76,6 @@ class SSEServer:
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
                     'Connection': 'keep-alive',
                     'X-Accel-Buffering': 'no',  # Disable nginx buffering
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type'
                 }
             )
         
