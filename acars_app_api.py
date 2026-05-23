@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 ACARS_APP_NAMES = ('acarsdec', 'vdlm2dec', 'jaero', 'dumphfdl')
 
 # D-ATIS uplink label.
-DATIS_LABEL = 'B9'
+DATIS_LABEL = 'A9'
 
 # Accepted ATIS direction tokens (D-ATIS).
 VALID_DATIS_TYPES = ('dep', 'arr')
