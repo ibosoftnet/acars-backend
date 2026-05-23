@@ -15,7 +15,7 @@ from database_handler import DatabaseHandler
 from tcp_client import TCPListener
 from sse_server import SSEServer
 from decode_handler import DecodeHandler
-from acars_datis_api import AcarsDatisAPI
+from acars_app_api import AcarsAppApi
 
 # Configure logging - will be reconfigured after loading config
 logging.basicConfig(
@@ -45,7 +45,7 @@ class ATCDatalinkBackend:
         self.tcp_client = None
         self.sse_server = None
         self.decode_handler = None
-        self.acars_datis_api = None
+        self.acars_app_api = None
         self._sec = {}
         self.running = False
         
@@ -232,43 +232,47 @@ class ATCDatalinkBackend:
             'jwt_cookie_name': jwt_cookie_name,
         }
 
-    def initialize_acars_datis_api(self):
-        """Initialize the ACARS D-ATIS API (optional, external-facing)."""
+    def initialize_acars_app_api(self):
+        """Initialize the ACARS Application API (optional, external-facing).
+
+        Auth here is limited to the static X-API-Key (no JWT cookie); browsers
+        do not call this module.
+        """
         try:
-            if not self.config.has_section('ACARS_DATIS_API'):
-                logger.info("ACARS_DATIS_API section not in config; module disabled")
-                self.acars_datis_api = None
+            if not self.config.has_section('ACARS_APP_API'):
+                logger.info("ACARS_APP_API section not in config; module disabled")
+                self.acars_app_api = None
                 return True
 
-            enabled = self.config.getboolean('ACARS_DATIS_API', 'enabled', fallback=False)
+            enabled = self.config.getboolean('ACARS_APP_API', 'enabled', fallback=False)
             if not enabled:
-                logger.info("ACARS D-ATIS API disabled by config")
-                self.acars_datis_api = None
+                logger.info("ACARS Application API disabled by config")
+                self.acars_app_api = None
                 return True
 
-            host = self.config.get('ACARS_DATIS_API', 'host', fallback='0.0.0.0')
-            port = self.config.getint('ACARS_DATIS_API', 'port', fallback=10012)
+            host = self.config.get('ACARS_APP_API', 'host', fallback='0.0.0.0')
+            port = self.config.getint('ACARS_APP_API', 'port', fallback=10012)
             max_per_type = self.config.getint(
-                'ACARS_DATIS_API', 'max_count_per_type', fallback=5
+                'ACARS_APP_API', 'max_count_per_type', fallback=5
             )
 
-            self.acars_datis_api = AcarsDatisAPI(
+            self.acars_app_api = AcarsAppApi(
                 db_handler=self.db_handler,
                 host=host,
                 port=port,
                 max_count_per_type=max_per_type,
-                **self._sec,
+                api_keys=self._sec.get('api_keys'),
             )
 
-            if not self.acars_datis_api.start():
-                logger.error("Failed to start ACARS D-ATIS API")
+            if not self.acars_app_api.start():
+                logger.error("Failed to start ACARS Application API")
                 return False
 
-            logger.info("ACARS D-ATIS API initialized successfully")
+            logger.info("ACARS Application API initialized successfully")
             return True
 
         except Exception as e:
-            logger.error(f"Error initializing ACARS D-ATIS API: {e}")
+            logger.error(f"Error initializing ACARS Application API: {e}")
             return False
 
     def initialize_tcp_client(self):
@@ -384,9 +388,9 @@ class ATCDatalinkBackend:
             logger.error("Failed to initialize SSE server")
             return False
 
-        # Initialize ACARS D-ATIS API (optional)
-        if not self.initialize_acars_datis_api():
-            logger.error("Failed to initialize ACARS D-ATIS API")
+        # Initialize ACARS Application API (optional)
+        if not self.initialize_acars_app_api():
+            logger.error("Failed to initialize ACARS Application API")
             return False
 
         # Initialize TCP client
@@ -450,9 +454,9 @@ class ATCDatalinkBackend:
         if self.sse_server:
             self.sse_server.stop()
 
-        # Stop ACARS D-ATIS API
-        if self.acars_datis_api:
-            self.acars_datis_api.stop()
+        # Stop ACARS Application API
+        if self.acars_app_api:
+            self.acars_app_api.stop()
 
         # Close database connection
         if self.db_handler:
