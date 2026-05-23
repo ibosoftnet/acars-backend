@@ -104,11 +104,22 @@ class AcarsDatisAPI:
             if count > self.max_count_per_type:
                 count = self.max_count_per_type
 
+            # days ---------------------------------------------------------
+            days_raw = request.args.get('days', default=None)
+            days = None
+            if days_raw is not None:
+                try:
+                    days = int(days_raw)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "days must be an integer"}), 400
+                if days < 1:
+                    return jsonify({"error": "days must be >= 1"}), 400
+
             # Query --------------------------------------------------------
             result = {"icao": icao, "count": count}
             try:
                 for atis_type in requested_types:
-                    result[atis_type] = self._query_datis(icao, atis_type, count)
+                    result[atis_type] = self._query_datis(icao, atis_type, count, days)
             except Exception as e:
                 logger.error(f"D-ATIS query failed for icao={icao}: {e}")
                 return jsonify({"error": "internal server error"}), 500
@@ -123,7 +134,7 @@ class AcarsDatisAPI:
                 "acars_app_names": list(ACARS_APP_NAMES),
             })
 
-    def _query_datis(self, icao, atis_type, count):
+    def _query_datis(self, icao, atis_type, count, days=None):
         """Return [{timestamp, text}, ...] for the requested ICAO/type.
 
         The regex tolerates either a space or a hyphen between the ICAO,
@@ -134,16 +145,23 @@ class AcarsDatisAPI:
         """
         direction = atis_type.upper()  # 'DEP' or 'ARR'
         regex = f"/{icao}[ -]{direction}[ -]ATIS[ -]"
+        params = [DATIS_LABEL, *ACARS_APP_NAMES, regex]
+        time_clause = ""
+        if days is not None:
+            cutoff = time.time() - days * 86400
+            time_clause = "  AND timestamp_msg >= %s "
+            params.append(cutoff)
+        params.append(int(count))
         sql = (
             "SELECT timestamp_msg, text "
             "FROM messages_json_raw "
             "WHERE label = %s "
             "  AND app_name IN (%s, %s, %s, %s) "
             "  AND text REGEXP %s "
+            f"{time_clause}"
             "ORDER BY timestamp_msg DESC "
             "LIMIT %s"
         )
-        params = (DATIS_LABEL, *ACARS_APP_NAMES, regex, int(count))
 
         cursor = None
         try:

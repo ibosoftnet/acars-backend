@@ -417,7 +417,7 @@ Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç 
 
 **Endpoint'ler:**
 
-- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Belirtilen ICAO için talep edilen tipler (DEP, ARR ya da her ikisi) bazında son N adet D-ATIS iletisini JSON olarak döner. `count`, config'deki `max_count_per_type` değeriyle sınırlandırılır.
+- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>&days=<D>` — Belirtilen ICAO için talep edilen tipler (DEP, ARR ya da her ikisi) bazında son N adet D-ATIS iletisini JSON olarak döner. `count`, config'deki `max_count_per_type` değeriyle sınırlandırılır. `days` verilirse yalnızca son D gün içindeki iletiler aranır.
 - `GET /acars-datis/health` — Modülün durumunu, `max_count_per_type` değerini ve kabul edilen ACARS `app_name` listesini döner.
 
 **Query parametreleri:**
@@ -427,6 +427,7 @@ Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç 
 | `icao` | Evet | 4 harf (A–Z, küçük/büyük harf duyarsız; uppercase'e normalize edilir) | Havalimanı ICAO kodu |
 | `type` | Hayır (varsayılan `dep,arr`) | `dep`, `arr` ya da `dep,arr` (sıra önemsiz) | Hangi ATIS türleri istenir |
 | `count` | Hayır (varsayılan `1`) | 1 ≤ N ≤ `max_count_per_type` | Her tipten kaç mesaj döneceği |
+| `days` | Hayır (varsayılan: yok) | Pozitif tam sayı | Yalnızca son N gün içindeki iletilerde arama yapılır; verilmezse tüm geçmiş taranır |
 
 **Veri kaynağı ve eşleşme deseni:** ACARS network D-ATIS iletilerinin metni genellikle şu desenle başlar:
 
@@ -456,6 +457,7 @@ Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]
 - Talep edilen tipler için yanıtta her zaman bir dizi alanı yer alır; o tipte mesaj bulunamamışsa `[]` döner.
 - Talep edilmeyen tip yanıtta hiç görünmez (örn. `type=dep` sorgusunda yanıtta `arr` alanı bulunmaz).
 - `count` alanı, çağıranın istediği değerin (sınırlandırma sonrası) etkili tavanını yansıtır.
+- `days` verilmezse zaman kısıtı uygulanmaz; tüm kayıt geçmişi taranır.
 - Mesajlar `timestamp` alanına göre azalan (en yeni üstte) sıralanır.
 
 ### Bağlantı Düzeyinde Kimlik Doğrulama:
@@ -741,7 +743,7 @@ This module is designed to let external applications (third-party tools, integra
 
 **Endpoints:**
 
-- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Returns up to N D-ATIS messages for the requested types (DEP, ARR or both) for the given ICAO. `count` is clamped to `max_count_per_type` from the config.
+- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>&days=<D>` — Returns up to N D-ATIS messages for the requested types (DEP, ARR or both) for the given ICAO. `count` is clamped to `max_count_per_type` from the config. If `days` is supplied, only messages from the last D days are searched.
 - `GET /acars-datis/health` — Returns the module status, the `max_count_per_type` value and the list of accepted ACARS `app_name` values.
 
 **Query parameters:**
@@ -751,6 +753,7 @@ This module is designed to let external applications (third-party tools, integra
 | `icao` | Yes | 4 letters (A–Z, case-insensitive; normalised to uppercase) | Airport ICAO code |
 | `type` | No (default `dep,arr`) | `dep`, `arr` or `dep,arr` (order does not matter) | Which ATIS directions to return |
 | `count` | No (default `1`) | 1 ≤ N ≤ `max_count_per_type` | How many messages per type |
+| `days` | No (default: none) | Positive integer | Restrict search to messages from the last N days; omit to search all history |
 
 **Data source and match pattern:** D-ATIS messages on the ACARS network typically begin with a pattern such as:
 
@@ -780,6 +783,7 @@ The backend searches with a REGEXP of the form `/<ICAO>[ -]DEP[ -]ATIS[ -]` or `
 - Requested types always appear as an array in the response; when there is no match for a type, the array is empty (`[]`).
 - Types that were not requested do not appear in the response (e.g. `type=dep` produces a response with no `arr` field).
 - The `count` field reflects the effective per-type cap after clamping.
+- When `days` is omitted no time filter is applied; the entire message history is searched.
 - Messages are sorted by `timestamp` in descending order (newest first).
 
 ### Connection-level Authentication:
