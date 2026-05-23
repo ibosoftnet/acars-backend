@@ -189,14 +189,14 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
   - max_log_size_mb = Log dosyasının azami boyutu (MB cinsinden) (Ör: 10)
   - backup_count = Log dosyası yedek sayısı (Ör: 2)
 - [DECODING]
-  - enabled = true veya false. ACARS ağı ARINC 622 uygulamalarının çözülmesi ile ilgili arka yazılım işlevlerinin etkinleştirilip etkinleştirilmeyeceğini belirler.
+  - enabled = true ya da false. ACARS ağı ARINC 622 uygulamalarının çözülmesi ile ilgili arka yazılım işlevlerinin etkinleştirilip etkinleştirilmeyeceğini belirler.
 - [ACARS_DATIS_API]
-  - enabled = true veya false. Harici uygulamaların ICAO location indicator belirterek son DEP/ARR D-ATIS iletilerini sorgulayabilmesi için ACARS D-ATIS API modülünün etkinleştirilip etkinleştirilmeyeceğini belirler.
+  - enabled = true ya da false. Harici uygulamaların ICAO location indicator belirterek son DEP/ARR D-ATIS iletilerini sorgulayabilmesi için ACARS D-ATIS API modülünün etkinleştirilip etkinleştirilmeyeceğini belirler.
   - host = ACARS D-ATIS API sunucusunun IP adresi (Ör: 0.0.0.0).
   - port = ACARS D-ATIS API sunucusunun port numarası (Ör: 10012). Mevcut [BACKEND] portu ile çakışmamalıdır.
-  - max_count_per_type = Tek bir API çağrısında DEP veya ARR tipi başına döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değere clamp edilir. (Ör: 5)
+  - max_count_per_type = Tek bir API çağrısında DEP ya da ARR tipi başına döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değerle sınırlandırılır. (Ör: 5)
 - [SECURITY]
-  - enabled = true veya false. /stream, /decode ve /acars-datis endpoint'lerinde bağlanma anı kimlik doğrulamasının etkinleştirilip etkinleştirilmeyeceğini belirler. /health endpoint'leri her durumda muaftır.
+  - enabled = true ya da false. /stream, /decode ve /acars-datis endpoint'lerinde bağlanma anı kimlik doğrulamasının etkinleştirilip etkinleştirilmeyeceğini belirler. /health endpoint'leri her durumda muaftır.
   - api_keys = Virgülle ayrılmış statik API key listesi. Harici (server-to-server) tüketiciler bu key'i `X-API-Key` HTTP header'ında gönderir. Browser tarafından kullanılmaz; tarayıcıya hiç inmez.
   - jwt_secret = atcweb tarafından üretilen oturum JWT'lerinin doğrulandığı paylaşılan HS256 anahtarı. atcweb `.htaccess`'teki `DATALINK_JWT_SECRET` ile aynı olmalıdır.
   - jwt_cookie_name = Browser tarafından otomatik gönderilen JWT'nin taşındığı çerez adı (varsayılan: `datalink_session`).
@@ -417,7 +417,7 @@ Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç 
 
 **Endpoint'ler:**
 
-- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Belirtilen ICAO için talep edilen tipler (DEP, ARR ya da her ikisi) bazında son N adet D-ATIS iletisini JSON olarak döner. `count`, config'deki `max_count_per_type` değerine clamp edilir.
+- `GET /acars-datis?icao=<ICAO>&type=<dep|arr|dep,arr>&count=<N>` — Belirtilen ICAO için talep edilen tipler (DEP, ARR ya da her ikisi) bazında son N adet D-ATIS iletisini JSON olarak döner. `count`, config'deki `max_count_per_type` değeriyle sınırlandırılır.
 - `GET /acars-datis/health` — Modülün durumunu, `max_count_per_type` değerini ve kabul edilen ACARS `app_name` listesini döner.
 
 **Query parametreleri:**
@@ -455,7 +455,7 @@ Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]
 
 - Talep edilen tipler için yanıtta her zaman bir dizi alanı yer alır; o tipte mesaj bulunamamışsa `[]` döner.
 - Talep edilmeyen tip yanıtta hiç görünmez (örn. `type=dep` sorgusunda yanıtta `arr` alanı bulunmaz).
-- `count` alanı, çağıranın istediği değerin (clamp sonrası) efektif tavanını yansıtır.
+- `count` alanı, çağıranın istediği değerin (sınırlandırma sonrası) etkili tavanını yansıtır.
 - Mesajlar `timestamp` alanına göre azalan (en yeni üstte) sıralanır.
 
 ### Bağlantı Düzeyinde Kimlik Doğrulama:
