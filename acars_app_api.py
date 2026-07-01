@@ -46,7 +46,8 @@ class AcarsAppApi:
     """HTTP API dispatching ATS-application queries by sub-path."""
 
     def __init__(self, db_handler, host, port, max_count_per_type,
-                 api_keys=None):
+                 api_keys=None, rate_limit_max=0, rate_limit_window_sec=1,
+                 trust_proxy=False):
         """
         Args:
             db_handler: Shared DatabaseHandler instance.
@@ -58,6 +59,12 @@ class AcarsAppApi:
             api_keys (iterable[str] | None): Static keys accepted via the
                 X-API-Key HTTP header. JWT cookies are intentionally NOT
                 accepted by this module.
+            rate_limit_max (int): Max requests per IP per short window
+                (<= 0 disables rate limiting).
+            rate_limit_window_sec (float): Length of the (short) rate-limit
+                window in seconds.
+            trust_proxy (bool): Use X-Forwarded-For for the client IP (set when
+                behind the nginx reverse proxy).
         """
         self.db_handler = db_handler
         self.host = host
@@ -74,6 +81,23 @@ class AcarsAppApi:
         }
 
         self._setup_routes()
+
+        # Rate limiter runs BEFORE auth so unauthenticated floods are rejected
+        # cheaply too. Registered first because Flask runs before_request
+        # callbacks in registration order.
+        from rate_limiter import SlidingWindowRateLimiter, make_rate_limit_validator
+        self.rate_limiter = SlidingWindowRateLimiter(
+            max_requests=rate_limit_max,
+            window_sec=rate_limit_window_sec,
+        )
+        if self.rate_limiter.enabled:
+            self.app.before_request(make_rate_limit_validator(
+                self.rate_limiter, trust_proxy=trust_proxy,
+            ))
+            logger.info(
+                f"Rate limit active: {rate_limit_max} req / "
+                f"{rate_limit_window_sec}s per IP (trust_proxy={trust_proxy})"
+            )
 
         if api_keys:
             from auth_helper import make_auth_validator
@@ -183,20 +207,11 @@ class AcarsAppApi:
             "LIMIT %s"
         )
 
-        cursor = None
-        try:
-            cursor = self.db_handler._get_cursor()
-            cursor.execute(sql, params)
-            return [
-                {"timestamp": row[0], "text": row[1]}
-                for row in cursor.fetchall()
-            ]
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except Exception:
-                    pass
+        rows = self.db_handler.execute_read(sql, params)
+        return [
+            {"timestamp": row[0], "text": row[1]}
+            for row in rows
+        ]
 
     # ---------------------------------------------------------------- lifecycle
     def start(self):

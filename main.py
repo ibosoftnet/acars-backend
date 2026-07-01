@@ -110,7 +110,8 @@ class ATCDatalinkBackend:
             db_password = self.config.get('DATABASE', 'password')
             db_name = self.config.get('DATABASE', 'database')
             max_messages = self.config.getint('RECORDING', 'max_messages')
-            
+            read_pool_size = self.config.getint('DATABASE', 'read_pool_size', fallback=8)
+
             # Create database handler
             self.db_handler = DatabaseHandler(
                 host=db_host,
@@ -118,7 +119,8 @@ class ATCDatalinkBackend:
                 user=db_user,
                 password=db_password,
                 database=db_name,
-                max_messages=max_messages
+                max_messages=max_messages,
+                read_pool_size=read_pool_size
             )
             
             # Create database if not exists
@@ -135,7 +137,10 @@ class ATCDatalinkBackend:
             if not self.db_handler.create_table_if_not_exists():
                 logger.error("Failed to create table")
                 return False
-            
+
+            # Ensure targeted read indexes exist (idempotent; skips if present).
+            self.db_handler.ensure_indexes()
+
             logger.info("Database initialized successfully")
             return True
             
@@ -255,6 +260,15 @@ class ATCDatalinkBackend:
             max_per_type = self.config.getint(
                 'ACARS_APP_API', 'max_count_per_type', fallback=5
             )
+            rate_limit_max = self.config.getint(
+                'ACARS_APP_API', 'rate_limit_max', fallback=0
+            )
+            rate_limit_window_sec = self.config.getfloat(
+                'ACARS_APP_API', 'rate_limit_window_sec', fallback=1
+            )
+            trust_proxy = self.config.getboolean(
+                'ACARS_APP_API', 'trust_proxy', fallback=False
+            )
 
             self.acars_app_api = AcarsAppApi(
                 db_handler=self.db_handler,
@@ -262,6 +276,9 @@ class ATCDatalinkBackend:
                 port=port,
                 max_count_per_type=max_per_type,
                 api_keys=self._sec.get('api_keys'),
+                rate_limit_max=rate_limit_max,
+                rate_limit_window_sec=rate_limit_window_sec,
+                trust_proxy=trust_proxy,
             )
 
             if not self.acars_app_api.start():

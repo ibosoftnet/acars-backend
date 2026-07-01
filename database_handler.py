@@ -6,6 +6,7 @@ Persistent MariaDB handler with self-recovery and auto-reconnect for long-term u
 
 import mysql.connector
 from mysql.connector import Error
+from mysql.connector import pooling
 import logging
 from datetime import datetime
 import json
@@ -17,10 +18,11 @@ logger = logging.getLogger(__name__)
 class DatabaseHandler:
     """Persistent MariaDB handler with self-recovery and auto-reconnect"""
     
-    def __init__(self, host, port, user, password, database, max_messages):
+    def __init__(self, host, port, user, password, database, max_messages,
+                 read_pool_size=8):
         """
         Initialize database handler
-        
+
         Args:
             host (str): Database host address
             port (int): Database port
@@ -28,6 +30,9 @@ class DatabaseHandler:
             password (str): Database password
             database (str): Database name
             max_messages (int): Maximum number of messages to retain
+            read_pool_size (int): Size of the separate connection pool used for
+                read queries (API + stats). Keeps concurrent readers off the
+                single writer connection, which is not thread-safe.
         """
         self.host = host
         self.port = port
@@ -35,11 +40,97 @@ class DatabaseHandler:
         self.password = password
         self.database = database
         self.max_messages = max_messages
+        self.read_pool_size = max(1, int(read_pool_size))
+        # Writer connection — used ONLY by the single TCP receiver thread
+        # (insert_message / _cleanup_old_messages). Single-threaded, so no lock.
         self.connection = None
+        # Read pool — used by all reader threads (API queries, stats count).
+        # mysql-connector connections are not thread-safe, so readers must never
+        # share the writer connection.
+        self.read_pool = None
         self.consecutive_failures = 0
         self.last_ping = 0
         self.ping_interval = 30  # saniye — her 30 saniyede bir kontrol (timeout'u önler)
         self.insert_count = 0  # Cleanup için mesaj sayacı
+
+    def _connection_kwargs(self):
+        """Shared connection kwargs for both the writer connection and pool."""
+        return dict(
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password,
+            database=self.database,
+            autocommit=True,
+            connection_timeout=30,
+            use_pure=True,       # C extension yerine pure Python
+            ssl_disabled=True,   # SSL devre dışı
+        )
+
+    def init_read_pool(self):
+        """Create the read connection pool (idempotent). Call after connect()."""
+        if self.read_pool is not None:
+            return True
+        try:
+            self.read_pool = pooling.MySQLConnectionPool(
+                pool_name='atc_read_pool',
+                pool_size=self.read_pool_size,
+                pool_reset_session=True,
+                **self._connection_kwargs(),
+            )
+            logger.info(
+                f"Read connection pool created (size={self.read_pool_size})"
+            )
+            return True
+        except Error as e:
+            logger.error(f"Failed to create read pool: {e}")
+            self.read_pool = None
+            return False
+
+    def execute_read(self, sql, params=None):
+        """Run a read query on a pooled connection and return all rows.
+
+        Isolated from the writer connection so concurrent API/stats reads never
+        corrupt the TCP receiver's insert path. Retries once on a stale pooled
+        connection.
+        """
+        if self.read_pool is None and not self.init_read_pool():
+            raise Error("Read pool is not available")
+
+        last_err = None
+        for attempt in range(2):
+            conn = None
+            cursor = None
+            try:
+                conn = self.read_pool.get_connection()
+                # Pooled connections can go stale (wait_timeout); refresh.
+                try:
+                    conn.ping(reconnect=True, attempts=2, delay=1)
+                except Error:
+                    pass
+                cursor = conn.cursor()
+                cursor.execute(sql, params or ())
+                return cursor.fetchall()
+            except (mysql.connector.InterfaceError,
+                    mysql.connector.OperationalError) as e:
+                # Stale/broken pooled connection — retry once with a fresh one.
+                last_err = e
+                logger.warning(
+                    f"Read query failed (attempt {attempt + 1}/2): {e}"
+                )
+                continue
+            finally:
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+                if conn:
+                    try:
+                        conn.close()  # returns the connection to the pool
+                    except Exception:
+                        pass
+        raise last_err if last_err else Error("Read query failed")
     
     def _safe_is_connected(self):
         """Güvenli bağlantı kontrolü - IndexError'dan korunur"""
@@ -79,20 +170,14 @@ class DatabaseHandler:
 
                 # Yeni bağlantı kur
                 self.connection = mysql.connector.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.user,
-                    password=self.password,
-                    database=self.database,
-                    autocommit=True,
-                    connection_timeout=30,  # 10'dan 30'a çıkarıldı
-                    use_pure=True,  # C extension yerine pure Python kullan
-                    ssl_disabled=True  # SSL'i devre dışı bırak
+                    **self._connection_kwargs()
                 )
-                
+
                 if self.connection.is_connected():
                     self.consecutive_failures = 0
                     logger.info(f"Successfully connected to MariaDB: {self.database}")
+                    # Okuma havuzunu ilk başarılı bağlantıda kur (idempotent).
+                    self.init_read_pool()
                     return True
                     
             except Error as e:
@@ -211,7 +296,9 @@ class DatabaseHandler:
                 INDEX idx_freq (freq),
                 INDEX idx_tail (tail),
                 INDEX idx_flight (flight),
-                INDEX idx_app_name (app_name)
+                INDEX idx_app_name (app_name),
+                INDEX idx_label_ts (label, timestamp_msg),
+                INDEX idx_timestamp_msg (timestamp_msg)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
             try:
@@ -234,6 +321,62 @@ class DatabaseHandler:
                 except:
                     pass
     
+    def ensure_indexes(self):
+        """Ensure the targeted read indexes exist on messages_json_raw.
+
+        Added for existing installs where the table predates these indexes.
+        MySQL has no `CREATE INDEX IF NOT EXISTS`, so existence is checked via
+        information_schema first. On a large table the ALTER may take a few
+        seconds the first time; subsequent startups find the index and skip.
+
+        - idx_label_ts (label, timestamp_msg): narrows D-ATIS queries to A9 rows
+          in timestamp order (no full scan / filesort; REGEXP runs on the small
+          candidate set).
+        - idx_timestamp_msg (timestamp_msg): serves the history page's time-range
+          filter + ORDER BY timestamp_msg DESC.
+        """
+        wanted = {
+            'idx_label_ts': 'ALTER TABLE messages_json_raw '
+                            'ADD INDEX idx_label_ts (label, timestamp_msg)',
+            'idx_timestamp_msg': 'ALTER TABLE messages_json_raw '
+                                 'ADD INDEX idx_timestamp_msg (timestamp_msg)',
+        }
+        if not self._ensure_connection():
+            logger.error("Cannot ensure indexes: no database connection")
+            return False
+
+        cursor = None
+        try:
+            cursor = self._get_cursor()
+            cursor.execute(
+                "SELECT DISTINCT index_name FROM information_schema.statistics "
+                "WHERE table_schema = %s AND table_name = 'messages_json_raw'",
+                (self.database,),
+            )
+            existing = {row[0] for row in cursor.fetchall()}
+
+            for name, ddl in wanted.items():
+                if name in existing:
+                    logger.info(f"Index {name} already exists")
+                    continue
+                try:
+                    logger.info(f"Creating index {name} (may take a moment)...")
+                    cursor.execute(ddl)
+                    logger.info(f"Index {name} created")
+                except Error as e:
+                    logger.error(f"Failed to create index {name}: {e}")
+            return True
+        except Error as e:
+            logger.error(f"Error ensuring indexes: {e}")
+            self.connection = None
+            return False
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+
     def insert_message(self, source_ip, source_port, raw_data, json_data):
         """
         Insert a new message into the database
@@ -418,31 +561,17 @@ class DatabaseHandler:
                     pass
     
     def get_message_count(self):
-        """Get total count of messages in database"""
-        if not self._ensure_connection():
-            return 0
-        
-        cursor = None
+        """Get total count of messages in database.
+
+        Runs on the read pool (called from the main stats thread) so it never
+        touches the TCP receiver's writer connection.
+        """
         try:
-            cursor = self._get_cursor()
-            try:
-                cursor.execute("SELECT COUNT(*) FROM messages_json_raw")
-                count = cursor.fetchone()[0]
-                return count
-            except (IndexError, AttributeError) as ie:
-                logger.warning(f"Count query failed (corrupt packet): {ie}")
-                self.connection = None
-                return 0
+            rows = self.execute_read("SELECT COUNT(*) FROM messages_json_raw")
+            return rows[0][0] if rows else 0
         except Error as e:
             logger.error(f"Error getting message count: {e}")
-            self.connection = None  # Hata durumunda bağlantıyı sıfırla
             return 0
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
     
     def close(self):
         """Close database connection"""

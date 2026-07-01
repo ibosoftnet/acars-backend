@@ -176,6 +176,7 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
   - user = Veri tabanı kullanıcı adı.
   - password = Veri tabanı kullanıcı parolası.
   - database = Kullanılacak veri tabanının adı.
+  - read_pool_size = Okuma sorguları (ACARS Application API + istatistik sayacı) için kullanılan ayrı bağlantı havuzunun boyutu. TCP alıcı iş parçacığının kullandığı tek yazıcı bağlantısı ile okuyucular karışmaz; böylece eşzamanlı API sorguları yazma yolunu bozamaz. (Ör: 8)
 - [BACKEND]
   - host = Uç yazılımın bağlanabilmesi için web sunucusunun IP adresi (Ör: localhost)
   - port = Uç yazılımın bağlanabilmesi için web sunucusunun port numarası (Ör: 10002)
@@ -195,6 +196,9 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
   - host = ACARS Application API sunucusunun IP adresi (Ör: 0.0.0.0).
   - port = ACARS Application API sunucusunun port numarası (Ör: 10012). Mevcut [BACKEND] portu ile çakışmamalıdır.
   - max_count_per_type = Tek bir API çağrısında, tip başına (örn. D-ATIS için DEP/ARR) döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değerle sınırlandırılır. (Ör: 5)
+  - rate_limit_window_sec = IP başına hız sınırı için kayan pencerenin süresi (saniye). Bilinçli olarak **kısa** tutulur: ani istek sellerini kısar ama istemciyi uzun süre kilitlemez; pencere dolar dolmaz yeniden istek atılabilir. (Ör: 1)
+  - rate_limit_max = Her `rate_limit_window_sec` penceresinde, IP başına izin verilen azami istek sayısı. Aşıldığında istek `429 Too Many Requests` + `Retry-After` ile reddedilir. `0` verilirse hız sınırı tamamen kapatılır. (Ör: 2)
+  - trust_proxy = true ya da false. Yazılım nginx reverse proxy arkasında çalışıyorsa `true` yapılır; böylece hız sınırı için proxy adresi yerine `X-Forwarded-For` başlığındaki gerçek istemci IP'si kullanılır.
 - [SECURITY]
   - enabled = true ya da false. /stream, /decode ve /acars-app/* endpoint'lerinde bağlanma anı kimlik doğrulamasının etkinleştirilip etkinleştirilmeyeceğini belirler. /health endpoint'leri her durumda muaftır.
   - api_keys = Virgülle ayrılmış statik API key listesi. Harici (server-to-server) tüketiciler bu key'i `X-API-Key` HTTP header'ında gönderir. Browser tarafından kullanılmaz; tarayıcıya hiç inmez.
@@ -283,6 +287,7 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - user = Database username.
   - password = Database user password.
   - database = Name of the database to be used.
+  - read_pool_size = Size of the separate connection pool used for read queries (ACARS Application API + stats counter). Keeps readers off the single writer connection used by the TCP receiver thread, so concurrent API queries cannot corrupt the write path. (e.g., 8)
 - [BACKEND]
   - host = IP address of the web server for frontend software to connect (e.g., localhost)
   - port = Port number of the web server for frontend software to connect (e.g., 10002)
@@ -302,6 +307,9 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - host = IP address of the ACARS Application API server (e.g., 0.0.0.0).
   - port = Port number of the ACARS Application API server (e.g., 10012). Must not conflict with the [BACKEND] port.
   - max_count_per_type = Maximum number of messages a single API call may return per type (for example DEP/ARR for D-ATIS). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - rate_limit_window_sec = Length (in seconds) of the sliding window used for per-IP rate limiting. Kept deliberately **short**: it throttles bursts/floods without locking a client out for long — a client may retry as soon as the window rolls over. (e.g., 1)
+  - rate_limit_max = Maximum number of requests allowed per IP within each `rate_limit_window_sec` window. When exceeded, the request is rejected with `429 Too Many Requests` + `Retry-After`. Set to `0` to disable rate limiting entirely. (e.g., 2)
+  - trust_proxy = true or false. Set to `true` when running behind the nginx reverse proxy so that the real client IP from the `X-Forwarded-For` header is used for rate limiting instead of the proxy address.
 - [SECURITY]
   - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-app/* endpoints. /health endpoints are always exempt.
   - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
@@ -444,7 +452,7 @@ GET /acars-app/<application>?<application-specific params>
 /ISTATYA.TI2/LTFM ARR ATIS Z 1100Z ...
 ```
 
-Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]ATIS[ -]` desenine göre, ACARS `B9` label'lı kayıtlar içinde arar (REGEXP). DEP/ARR ile ATIS arasındaki ve ICAO ile DEP/ARR arasındaki ayraç **boşluk ya da tire** olabilir; her iki varyant da eşleşir.
+Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]ATIS[ -]` desenine göre, ACARS `A9` label'lı kayıtlar içinde arar (REGEXP). DEP/ARR ile ATIS arasındaki ve ICAO ile DEP/ARR arasındaki ayraç **boşluk ya da tire** olabilir; her iki varyant da eşleşir.
 
 **Yanıt JSON yapısı örneği** (`/acars-app/datis?icao=LTFM&type=dep,arr&count=3`):
 
@@ -467,6 +475,8 @@ Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]
 - `count` alanı, çağıranın istediği değerin (sınırlandırma sonrası) etkili tavanını yansıtır.
 - `days` verilmezse zaman kısıtı uygulanmaz; tüm kayıt geçmişi taranır.
 - Mesajlar `timestamp` alanına göre azalan (en yeni üstte) sıralanır.
+
+**Hız sınırı ve eşzamanlılık:** Modül, IP başına **kısa pencereli** bir hız sınırı uygular (bkz. `[ACARS_APP_API].rate_limit_window_sec` / `rate_limit_max`); eşiği aşan istekler `429 Too Many Requests` + `Retry-After` ile geri çevrilir. Bu, çok sayıda eşzamanlı istek geldiğinde (örn. arayan bir sitenin istek seli) veri tabanının aşırı yüklenmesini önler. Okuma sorguları ayrı bir bağlantı havuzundan (`[DATABASE].read_pool_size`) yürütülür; bu sayede API sorguları TCP alıcı iş parçacığının yazma yolunu etkilemez ve yoğun okuma trafiği ileti kaydını kesintiye uğratmaz.
 
 ### Bağlantı Düzeyinde Kimlik Doğrulama:
 Arka yazılım, `/stream`, `/decode` ve `/acars-app/*` endpoint'lerinde **bağlanma anında** kimlik doğrulaması yapar; bağlantı bir kez kurulduktan sonra mesaj akışı sırasında ek doğrulama yapılmaz. SSE server'ın `/health` endpoint'i her durumda korumadan muaftır. Yapılandırma `[SECURITY]` bölümünden yapılır; `enabled = false` ile geçiş/dev için tamamen devre dışı bırakılabilir.
@@ -526,6 +536,8 @@ Yazılım, veri tabanında `messages_json_raw` adında bir tablo oluşturur ve i
 | app_name        | VARCHAR(50) | Uygulama adı                                  |
 | app_ver         | VARCHAR(50) | Uygulama sürümü                               |
 
+Sorgu başarımı için, tabloya tekil sütun indekslerinin yanı sıra iki hedefli indeks eklenir: `idx_label_ts (label, timestamp_msg)` ve `idx_timestamp_msg (timestamp_msg)`. Bunlar hem D-ATIS API sorgusunu (aday kayıtları ilgili label'a ve zaman sırasına daraltarak tam tablo taraması ve filesort'u önler) hem de uç yazılımın Geçmiş (History) sayfasındaki zaman aralığı filtresi + `ORDER BY timestamp_msg` sorgusunu hızlandırır. İndeksler başlangıçta yoksa otomatik eklenir; mevcut kurulumlarda ilk çalıştırmada `ALTER TABLE` birkaç saniye sürebilir, sonraki açılışlarda atlanır.
+
 
 ### ARINC 620 ve ARINC 622 Uygulamalarının Çözülmesi:
 
@@ -550,6 +562,7 @@ acars-backend/
 ├── tcp_client.py           # TCP istemci modülü
 ├── sse_server.py           # SSE sunucu modülü
 ├── acars_app_api.py        # ACARS Application API modülü (D-ATIS + ileride diğer ATS uygulamaları)
+├── rate_limiter.py         # ACARS Application API için IP başına kısa pencereli hız sınırlayıcı
 ├── config.ini              # Yapılandırma dosyası
 ├── requirements.txt        # Python bağımlılıkları
 ├── install-venv.bat        # Sanal ortamı (venv) kuran ve bağımlılıkları yükleyen ilk kurulum betiği
@@ -635,6 +648,7 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - user = Database username.
   - password = Database user password.
   - database = Name of the database to be used.
+  - read_pool_size = Size of the separate connection pool used for read queries (ACARS Application API + stats counter). Keeps readers off the single writer connection used by the TCP receiver thread, so concurrent API queries cannot corrupt the write path. (e.g., 8)
 - [BACKEND]
   - host = IP address of the web server for frontend software to connect (e.g., localhost)
   - port = Port number of the web server for frontend software to connect (e.g., 10002)
@@ -654,6 +668,9 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - host = IP address of the ACARS Application API server (e.g., 0.0.0.0).
   - port = Port number of the ACARS Application API server (e.g., 10012). Must not conflict with the [BACKEND] port.
   - max_count_per_type = Maximum number of messages a single API call may return per type (for example DEP/ARR for D-ATIS). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - rate_limit_window_sec = Length (in seconds) of the sliding window used for per-IP rate limiting. Kept deliberately **short**: it throttles bursts/floods without locking a client out for long — a client may retry as soon as the window rolls over. (e.g., 1)
+  - rate_limit_max = Maximum number of requests allowed per IP within each `rate_limit_window_sec` window. When exceeded, the request is rejected with `429 Too Many Requests` + `Retry-After`. Set to `0` to disable rate limiting entirely. (e.g., 2)
+  - trust_proxy = true or false. Set to `true` when running behind the nginx reverse proxy so that the real client IP from the `X-Forwarded-For` header is used for rate limiting instead of the proxy address.
 - [SECURITY]
   - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-app/* endpoints. /health endpoints are always exempt.
   - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
@@ -796,7 +813,7 @@ GET /acars-app/<application>?<application-specific params>
 /ISTATYA.TI2/LTFM ARR ATIS Z 1100Z ...
 ```
 
-The backend searches `B9`-labelled rows with a REGEXP of the form `/<ICAO>[ -]DEP[ -]ATIS[ -]` or `/<ICAO>[ -]ARR[ -]ATIS[ -]`. The separator between ICAO, direction (DEP/ARR) and the literal `ATIS` may be **either a space or a hyphen**; all variants are matched.
+The backend searches `A9`-labelled rows with a REGEXP of the form `/<ICAO>[ -]DEP[ -]ATIS[ -]` or `/<ICAO>[ -]ARR[ -]ATIS[ -]`. The separator between ICAO, direction (DEP/ARR) and the literal `ATIS` may be **either a space or a hyphen**; all variants are matched.
 
 **Example JSON response** (`/acars-app/datis?icao=LTFM&type=dep,arr&count=3`):
 
@@ -819,6 +836,8 @@ The backend searches `B9`-labelled rows with a REGEXP of the form `/<ICAO>[ -]DE
 - The `count` field reflects the effective per-type cap after clamping.
 - When `days` is omitted no time filter is applied; the entire message history is searched.
 - Messages are sorted by `timestamp` in descending order (newest first).
+
+**Rate limiting and concurrency:** The module enforces a **short-window** per-IP rate limit (see `[ACARS_APP_API].rate_limit_window_sec` / `rate_limit_max`); requests over the threshold are rejected with `429 Too Many Requests` + `Retry-After`. This protects the database from overload under a burst of concurrent requests (e.g. a calling site flooding the endpoint). Read queries run on a separate connection pool (`[DATABASE].read_pool_size`), so API queries never touch the TCP receiver thread's write path and heavy read traffic cannot interrupt message recording.
 
 ### Connection-level Authentication:
 The backend authenticates **at connection establishment** for the `/stream`, `/decode` and `/acars-app/*` endpoints; once a connection is open no per-message check is performed. The SSE server's `/health` endpoint is always exempt. Configuration lives in the `[SECURITY]` section; setting `enabled = false` disables the check entirely (useful for migrations or local development).
@@ -868,6 +887,8 @@ The software creates a table named `messages_json_raw` in the database and recor
 | app_name        | VARCHAR(50) | Application name                              |
 | app_ver         | VARCHAR(50) | Application version                           |
 
+For query performance, in addition to the single-column indexes the table gets two targeted indexes: `idx_label_ts (label, timestamp_msg)` and `idx_timestamp_msg (timestamp_msg)`. These speed up both the D-ATIS API query (narrowing candidate rows to the relevant label in timestamp order, avoiding a full table scan and filesort) and the frontend History page's time-range filter + `ORDER BY timestamp_msg` query. The indexes are created automatically at startup if missing; on existing installs the first run's `ALTER TABLE` may take a few seconds, and subsequent startups skip it.
+
 
 ### Decoding ARINC 620 and ARINC 622 Applications:
 
@@ -892,6 +913,7 @@ acars-backend/
 ├── tcp_client.py           # TCP client module
 ├── sse_server.py           # SSE server module
 ├── acars_app_api.py        # ACARS Application API module (D-ATIS + future ATS applications)
+├── rate_limiter.py         # Per-IP short-window rate limiter for the ACARS Application API
 ├── config.ini              # Configuration file
 ├── requirements.txt        # Python dependencies
 ├── install-venv.bat        # First-time setup script: creates the venv and installs dependencies
