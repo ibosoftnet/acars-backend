@@ -4,9 +4,13 @@ Provides a Flask before_request validator that gates connection establishment fo
 protected endpoints. Accepts two credential channels:
 
 1. X-API-Key HTTP header — static keys for server-to-server (external app) callers.
-2. JWT cookie (default name 'datalink_session') — short-lived HS256 token issued by
-   atcweb (signed with the shared secret). Used by browser clients; the static key
-   itself never reaches the browser.
+2. HS256 JWT issued by atcweb (signed with the shared secret). Used by browser
+   clients; the static key itself never reaches the browser. The token is read from
+   the first of: `Authorization: Bearer <jwt>` header, `?token=<jwt>` query parameter
+   (EventSource cannot send headers), or the JWT cookie (default name
+   'datalink_session', legacy). Header/query transport works regardless of the
+   domains the frontend and backend are served from; the cookie only works when
+   both share a parent domain.
 
 Auth runs only at connection establishment; once the SSE stream is open, no
 per-message check is performed.
@@ -26,6 +30,17 @@ def parse_api_keys(raw):
     return {part.strip() for part in raw.split(',') if part.strip()}
 
 
+def _extract_jwt(cookie_name):
+    """Return the JWT from the Authorization header, ?token= query or cookie."""
+    auth = request.headers.get('Authorization', '')
+    if auth[:7].lower() == 'bearer ' and auth[7:].strip():
+        return auth[7:].strip()
+    token = request.args.get('token')
+    if token:
+        return token
+    return request.cookies.get(cookie_name)
+
+
 def make_auth_validator(api_keys=None, jwt_secret=None,
                         jwt_cookie_name='datalink_session', exempt_paths=None):
     """
@@ -33,8 +48,8 @@ def make_auth_validator(api_keys=None, jwt_secret=None,
 
     Args:
         api_keys (iterable[str] | None): Accepted static keys (X-API-Key header).
-        jwt_secret (str | None): Shared HS256 secret for verifying JWT cookies.
-        jwt_cookie_name (str): Name of the cookie carrying the JWT.
+        jwt_secret (str | None): Shared HS256 secret for verifying JWTs.
+        jwt_cookie_name (str): Name of the cookie carrying the JWT (legacy channel).
         exempt_paths (iterable[str] | None): Request paths that bypass auth
                                              (typically health endpoints).
 
@@ -64,9 +79,9 @@ def make_auth_validator(api_keys=None, jwt_secret=None,
         if provided_key and provided_key in api_keys_set:
             return None
 
-        # Channel 2: JWT cookie
+        # Channel 2: JWT (Authorization header, ?token= query, or cookie)
         if secret:
-            token = request.cookies.get(jwt_cookie_name)
+            token = _extract_jwt(jwt_cookie_name)
             if token:
                 try:
                     jwt.decode(token, secret, algorithms=['HS256'])

@@ -30,7 +30,7 @@ class SSEServer:
                                        (Frontend decides how many to display)
             decode_handler: DecodeHandler instance for ACARS decoding
             api_keys (iterable[str] | None): Static keys accepted via X-API-Key header.
-            jwt_secret (str | None): HS256 secret for verifying browser JWT cookies.
+            jwt_secret (str | None): HS256 secret for verifying browser JWTs.
             jwt_cookie_name (str): Cookie name carrying the JWT.
         """
         self.host = host
@@ -51,7 +51,7 @@ class SSEServer:
         # Setup Flask routes
         self._setup_routes()
 
-        # Install connection-level auth (X-API-Key header or JWT cookie)
+        # Install connection-level auth (X-API-Key header or JWT: Bearer header, ?token= or cookie)
         if api_keys or jwt_secret:
             from auth_helper import make_auth_validator
             self.app.before_request(make_auth_validator(
