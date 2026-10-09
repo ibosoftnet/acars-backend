@@ -203,7 +203,7 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
   - enabled = true ya da false. /stream, /decode ve /acars-app/* endpoint'lerinde bağlanma anı kimlik doğrulamasının etkinleştirilip etkinleştirilmeyeceğini belirler. /health endpoint'leri her durumda muaftır.
   - api_keys = Virgülle ayrılmış statik API key listesi. Harici (server-to-server) tüketiciler bu key'i `X-API-Key` HTTP header'ında gönderir. Browser tarafından kullanılmaz; tarayıcıya hiç inmez.
   - jwt_secret = atcweb tarafından üretilen oturum JWT'lerinin doğrulandığı paylaşılan HS256 anahtarı. atcweb `.htaccess`'teki `DATALINK_JWT_SECRET` ile aynı olmalıdır.
-  - jwt_cookie_name = Browser tarafından otomatik gönderilen JWT'nin taşındığı çerez adı (varsayılan: `datalink_session`).
+  - jwt_cookie_name = JWT'nin taşındığı çerez adı (eski yöntem, varsayılan: `datalink_session`). JWT ayrıca `Authorization: Bearer` başlığı ya da `?token=` parametresiyle kabul edilir.
 
 ### Reverse Proxy Kullanımı:
 Uç yazılım, yerel ağda değil de internet ortamında yayınlanacaksa ve de uç yazılımı ayarlarken doğrudan IP erişimi yerine alan adı kullanmak istiyorsanız Reverse Proxy kullanabilirsiniz. Uygun bir yazılım (IIS, Nginx, Apache vb.) ve ayarlamalar ile, dışarıdan belirli bir domain adı ve/veya alt alan adı ile gelen istekleri, arka yazılımın çalıştığı sunucu ve porta yönlendirebilirsiniz. Reverse Proxy ayarlanırken, SSE (Server-Sent Events) desteği olan bir yazılım kullanmanız ve SSE isteklerinin doğru şekilde yönlendirildiğinden emin olmanız gerekmektedir.
@@ -314,7 +314,7 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-app/* endpoints. /health endpoints are always exempt.
   - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
   - jwt_secret = Shared HS256 secret used to verify session JWTs issued by atcweb. Must match `DATALINK_JWT_SECRET` set in atcweb's `.htaccess`.
-  - jwt_cookie_name = Cookie name carrying the JWT (default: `datalink_session`). Sent automatically by the browser.
+  - jwt_cookie_name = Cookie name carrying the JWT (legacy channel, default: `datalink_session`). The JWT is also accepted as an `Authorization: Bearer` header or a `?token=` query parameter.
 
 ### Using Reverse Proxy:
 If the frontend software will be published in an internet environment rather than a local network and you want to use a domain name instead of direct IP access when configuring the frontend software, you can use a Reverse Proxy. With appropriate software (IIS, Nginx, Apache, etc.) and configurations, you can redirect requests from outside with a specific domain name and/or subdomain to the server and port where the backend software is running. When configuring the Reverse Proxy, you must use software that supports SSE (Server-Sent Events) and ensure that SSE requests are properly redirected.
@@ -483,17 +483,17 @@ Arka yazılım, `/stream`, `/decode` ve `/acars-app/*` endpoint'lerinde **bağla
 
 İki ayrı kabul kanalı vardır ve **endpoint sınıfına göre farklı kanallar açıktır:**
 
-| Endpoint | `X-API-Key` header | `datalink_session` JWT cookie |
+| Endpoint | `X-API-Key` header | JWT (`Authorization: Bearer`, `?token=`, `datalink_session` çerezi) |
 |---|---|---|
 | `/stream`, `/decode` | ✓ | ✓ |
 | `/acars-app/*` | ✓ | ✗ (kabul edilmez) |
 | SSE `/health` | — (muaf) | — (muaf) |
 
-`/acars-app/*` modülü tarayıcı tarafından çağrılmadığı için JWT cookie yolu bilinçli olarak kapalıdır; harici (server-to-server) tüketiciler yalnız `X-API-Key` ile kimlik doğrular.
+`/acars-app/*` modülü tarayıcı tarafından çağrılmadığı için JWT yolu bilinçli olarak kapalıdır; harici (server-to-server) tüketiciler yalnız `X-API-Key` ile kimlik doğrular.
 
 **`X-API-Key` HTTP header'ı (harici uygulamalar için):** Sunucudan sunucuya çağıran harici uygulamalar, `[SECURITY].api_keys` listesindeki statik bir anahtarı bu header ile gönderir. Anahtar tarayıcıya hiç inmez; uygulamanın kendi yapılandırmasında saklı kalır.
 
-**`datalink_session` çerezi içinde HS256 JWT (yalnız `/stream` ve `/decode` için, tarayıcı):** Statik anahtar tarayıcıya inmediği için, atcweb PHP'si oturum açmış kullanıcıya **kısa ömürlü (8 saat)** bir JWT üretir ve `HttpOnly + Secure + SameSite=None + Domain=.ibosoft.net.tr` özellikli bir çerez olarak set eder. Tarayıcı bu çerezi `dlink-api.ibosoft.net.tr` alt alan adına otomatik olarak gönderir. Arka yazılım, çerezdeki JWT'nin imzasını `[SECURITY].jwt_secret` ile doğrular ve süre dolma kontrolü yapar. Statik anahtarın kendisi tarayıcıya, JavaScript'e, URL'ye veya HTML kaynağına hiçbir şekilde yazılmaz; tarayıcıda yalnızca oturuma özel, süresi dolan JWT bulunur.
+**HS256 JWT (yalnız `/stream` ve `/decode` için, tarayıcı):** Statik anahtar tarayıcıya inmediği için, atcweb PHP'si oturum açmış kullanıcıya **kısa ömürlü (8 saat)** bir JWT üretir ve sayfaya verir. Tarayıcı JWT'yi `/stream` bağlantısında `?token=` sorgu parametresiyle (EventSource başlık gönderemez), `/decode` isteklerinde `Authorization: Bearer` başlığıyla gönderir. Bu taşıma şekli uç yazılım ile arka yazılımın hangi alan adlarında çalıştığından bağımsızdır. Geriye dönük uyumluluk için `datalink_session` çerezi de kabul edilir; ancak çerez yalnızca iki taraf aynı üst alan adını paylaşıyorsa çalışır. Arka yazılım, JWT'nin imzasını `[SECURITY].jwt_secret` ile doğrular ve süre dolma kontrolü yapar. Statik anahtarın kendisi tarayıcıya, JavaScript'e, URL'ye veya HTML kaynağına hiçbir şekilde yazılmaz; tarayıcıda yalnızca oturuma özel, süresi dolan JWT bulunur. `?token=` ile gönderilen JWT ters vekil erişim loglarında görünebilir; JWT süreli olduğu ve statik anahtarı içermediği için bu kabul edilmiştir.
 
 Geçersiz/eksik kimlik bilgisinde arka yazılım `401 Unauthorized` + `{"error":"unauthorized"}` döner. SSE bağlantısı bir kez kurulduktan sonra JWT süresi dolsa bile akış kesilmez; yalnızca yeniden bağlanma denemesi sırasında yeni bir JWT gerekir (kullanıcı sayfayı yenilediğinde atcweb yeni bir JWT üretir).
 
@@ -503,7 +503,7 @@ JWT imzalamak için kullanılan statik anahtar, atcweb tarafında `.htaccess` `S
 
 1. **`X-API-Key` HTTP header'ı (harici uygulamalar için):** Sunucudan sunucuya çağıran harici uygulamalar, `[SECURITY].api_keys` listesindeki statik bir anahtarı bu header ile gönderir. Anahtar tarayıcıya hiç inmez; uygulamanın kendi yapılandırmasında saklı kalır.
 
-2. **`datalink_session` çerezi içinde HS256 JWT (tarayıcı için):** Statik anahtar tarayıcıya inmediği için, atcweb PHP'si oturum açmış kullanıcıya **kısa ömürlü (8 saat)** bir JWT üretir ve `HttpOnly + Secure + SameSite=None + Domain=.ibosoft.net.tr` özellikli bir çerez olarak set eder. Tarayıcı bu çerezi `dlink-api.ibosoft.net.tr` alt alan adına otomatik olarak gönderir. Arka yazılım, çerezdeki JWT'nin imzasını `[SECURITY].jwt_secret` ile doğrular ve süre dolma kontrolü yapar. Statik anahtarın kendisi tarayıcıya, JavaScript'e, URL'ye veya HTML kaynağına hiçbir şekilde yazılmaz; tarayıcıda yalnızca oturuma özel, süresi dolan JWT bulunur.
+2. **HS256 JWT (tarayıcı için):** Statik anahtar tarayıcıya inmediği için, atcweb PHP'si oturum açmış kullanıcıya **kısa ömürlü (8 saat)** bir JWT üretir ve sayfaya verir. Tarayıcı JWT'yi `/stream` bağlantısında `?token=` sorgu parametresiyle (EventSource başlık gönderemez), `/decode` isteklerinde `Authorization: Bearer` başlığıyla gönderir. Bu taşıma şekli uç yazılım ile arka yazılımın hangi alan adlarında çalıştığından bağımsızdır. Geriye dönük uyumluluk için `datalink_session` çerezi de kabul edilir; ancak çerez yalnızca iki taraf aynı üst alan adını paylaşıyorsa çalışır. Arka yazılım, JWT'nin imzasını `[SECURITY].jwt_secret` ile doğrular ve süre dolma kontrolü yapar. Statik anahtarın kendisi tarayıcıya, JavaScript'e, URL'ye veya HTML kaynağına hiçbir şekilde yazılmaz; tarayıcıda yalnızca oturuma özel, süresi dolan JWT bulunur. `?token=` ile gönderilen JWT ters vekil erişim loglarında görünebilir; JWT süreli olduğu ve statik anahtarı içermediği için bu kabul edilmiştir.
 
 Geçersiz/eksik kimlik bilgisinde arka yazılım `401 Unauthorized` + `{"error":"unauthorized"}` döner. SSE bağlantısı bir kez kurulduktan sonra JWT süresi dolsa bile akış kesilmez; yalnızca yeniden bağlanma denemesi sırasında yeni bir JWT gerekir (kullanıcı sayfayı yenilediğinde atcweb yeni bir JWT üretir).
 
@@ -675,7 +675,7 @@ Settings are made via the config.ini file. The explanations of the settings are 
   - enabled = true or false. Determines whether connection-level authentication is enforced on /stream, /decode and /acars-app/* endpoints. /health endpoints are always exempt.
   - api_keys = Comma-separated list of accepted static API keys. External (server-to-server) callers send the key in the `X-API-Key` HTTP header. Not used by browsers; the static key never reaches the browser.
   - jwt_secret = Shared HS256 secret used to verify session JWTs issued by atcweb. Must match `DATALINK_JWT_SECRET` set in atcweb's `.htaccess`.
-  - jwt_cookie_name = Cookie name carrying the JWT (default: `datalink_session`). Sent automatically by the browser.
+  - jwt_cookie_name = Cookie name carrying the JWT (legacy channel, default: `datalink_session`). The JWT is also accepted as an `Authorization: Bearer` header or a `?token=` query parameter.
 
 ### Using Reverse Proxy:
 If the frontend software will be published in an internet environment rather than a local network and you want to use a domain name instead of direct IP access when configuring the frontend software, you can use a Reverse Proxy. With appropriate software (IIS, Nginx, Apache, etc.) and configurations, you can redirect requests from outside with a specific domain name and/or subdomain to the server and port where the backend software is running. When configuring the Reverse Proxy, you must use software that supports SSE (Server-Sent Events) and ensure that SSE requests are properly redirected.
@@ -844,17 +844,17 @@ The backend authenticates **at connection establishment** for the `/stream`, `/d
 
 Two credential channels exist, but **which channels are accepted depends on the endpoint class:**
 
-| Endpoint | `X-API-Key` header | `datalink_session` JWT cookie |
+| Endpoint | `X-API-Key` header | JWT (`Authorization: Bearer`, `?token=`, `datalink_session` cookie) |
 |---|---|---|
 | `/stream`, `/decode` | ✓ | ✓ |
 | `/acars-app/*` | ✓ | ✗ (not accepted) |
 | SSE `/health` | — (exempt) | — (exempt) |
 
-The `/acars-app/*` module is not called by browsers, so the JWT cookie path is deliberately closed there; external (server-to-server) callers authenticate exclusively with `X-API-Key`.
+The `/acars-app/*` module is not called by browsers, so the JWT path is deliberately closed there; external (server-to-server) callers authenticate exclusively with `X-API-Key`.
 
 **`X-API-Key` HTTP header (external applications):** Server-to-server callers send a static key from the `[SECURITY].api_keys` list in this header. The static key never reaches a browser; it stays in the caller application's own configuration.
 
-**HS256 JWT inside the `datalink_session` cookie (`/stream` and `/decode` only, browsers):** Because the static key must not be exposed to the browser, atcweb's PHP issues a **short-lived (8 hours)** JWT for an authenticated user and stores it in an `HttpOnly + Secure + SameSite=None + Domain=.ibosoft.net.tr` cookie. The browser automatically attaches this cookie when contacting `dlink-api.ibosoft.net.tr`. The backend verifies the JWT signature with `[SECURITY].jwt_secret` and checks the expiry. The static key itself is never written to the browser, to JavaScript, to URLs or to the HTML source — the browser only ever carries the per-session, expiring JWT.
+**HS256 JWT (`/stream` and `/decode` only, browsers):** Because the static key must not be exposed to the browser, atcweb's PHP issues a **short-lived (8 hours)** JWT for an authenticated user and hands it to the page. The browser sends it as a `?token=` query parameter on the `/stream` connection (EventSource cannot send headers) and as an `Authorization: Bearer` header on `/decode` requests. This transport works regardless of which domains the frontend and backend are served from. The `datalink_session` cookie is still accepted for backward compatibility, but a cookie only works when both sides share a parent domain. The backend verifies the JWT signature with `[SECURITY].jwt_secret` and checks the expiry. The static key itself is never written to the browser, to JavaScript, to URLs or to the HTML source — the browser only ever carries the per-session, expiring JWT. A JWT sent via `?token=` may appear in reverse-proxy access logs; this is accepted because the JWT expires and does not contain the static secret.
 
 When the credential is missing or invalid the backend responds with `401 Unauthorized` + `{"error":"unauthorized"}`. Once an SSE connection is open, expiry of the underlying JWT does not break the stream; a fresh JWT is required only on reconnect (reloading the page in atcweb mints a new one).
 
