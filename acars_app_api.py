@@ -262,12 +262,15 @@ class AcarsAppApi:
     def _query_dcl(self, icao, count, days=None):
         """Return [{timestamp, text}, ...] for the requested ICAO.
 
-        Same query as D-ATIS, with the DCL label and the ICAO matched as
-        '/<ICAO>' in the text (no DEP/ARR ATIS part). ICAO is already
+        Same query as D-ATIS, with the DCL label. DCL text header is
+        '/<STATION>.DC1/CLD <HHMM> <YYMMDD> <ICAO> ...' (e.g.
+        '/ESBCTYA.DC1/CLD 1142 261013 LTAI PDC 075'), so the ICAO is matched
+        in that header position only — an ICAO appearing later in the
+        clearance (e.g. 'CLRD TO LCEN') does not match. ICAO is already
         validated as [A-Z]{4}, so no regex special characters can be
         injected by callers.
         """
-        regex = f"/{icao}"
+        regex = f"/CLD [0-9]{{4}} [0-9]{{6}} {icao} "
         params = [DCL_LABEL, *ACARS_APP_NAMES, regex]
         time_clause = ""
         if days is not None:

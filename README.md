@@ -524,7 +524,7 @@ Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]
 
 **Uygulama: `dcl` (DCL — Departure Clearance)**
 
-`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Belirtilen havalimanı ICAO'su için son N adet DCL iletisini JSON olarak döner. Sorgu D-ATIS ile aynıdır; farkı ACARS `A3` label'lı kayıtlar içinde aranması ve ICAO'nun metinde `/<ICAO>` desenine göre (REGEXP) eşleşmesidir. `type` parametresi yoktur.
+`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Belirtilen havalimanı ICAO'su için son N adet DCL iletisini JSON olarak döner. Sorgu D-ATIS ile aynıdır; farkı ACARS `A3` label'lı kayıtlar içinde aranması ve ICAO'nun DCL başlığındaki yerinde `/CLD <HHMM> <YYMMDD> <ICAO> ` desenine göre (REGEXP) eşleşmesidir (örn. `/ESBCTYA.DC1/CLD 1142 261013 LTAI PDC 075`). Klerans metninde sonradan geçen ICAO'lar (örn. `CLRD TO LCEN`) eşleşmez. `type` parametresi yoktur.
 
 | Parametre | Zorunlu | Format | Açıklama |
 |---|---|---|---|
@@ -924,7 +924,7 @@ The backend searches `A9`-labelled rows with a REGEXP of the form `/<ICAO>[ -]DE
 
 **Application: `dcl` (DCL — Departure Clearance)**
 
-`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Returns up to N DCL messages for the given airport ICAO. The query is the same as D-ATIS, except that it searches `A3`-labelled rows and matches the ICAO in the text with a REGEXP of the form `/<ICAO>`. There is no `type` parameter.
+`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Returns up to N DCL messages for the given airport ICAO. The query is the same as D-ATIS, except that it searches `A3`-labelled rows and matches the ICAO at its position in the DCL header with a REGEXP of the form `/CLD <HHMM> <YYMMDD> <ICAO> ` (e.g. `/ESBCTYA.DC1/CLD 1142 261013 LTAI PDC 075`). ICAOs appearing later in the clearance text (e.g. `CLRD TO LCEN`) do not match. There is no `type` parameter.
 
 | Parameter | Required | Format | Description |
 |---|---|---|---|
