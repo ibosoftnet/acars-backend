@@ -1,0 +1,6 @@
+# Shell scripts must keep LF line endings (Linux)
+*.sh text eol=lf
+
+# Native libraries
+*.dll binary
+*.so binary

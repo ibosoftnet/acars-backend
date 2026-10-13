@@ -1,5 +1,5 @@
 # ACARS Backend
-08.01.2026
+13.10.2026
 
 ---
 
@@ -16,7 +16,7 @@ Yazılımın canlı aldığı veya veri tabanına kaydettiği verilerin görünt
 * İletileri, uç yazılıma iletir.
 * İletileri, MySQL türevi veri tabanına kaydeder.
 * Veri bağlantısı koparsa, yeniden bağlanmayı kısa aralıklarla sürekli dener.
-* Windows hizmeti olarak çalıştırılabilir.
+* Windows ve Linux üzerinde hizmet olarak çalıştırılabilir.
 
 **Data Link Yazılımlarımız:**
 * ACARS Viewer
@@ -51,7 +51,7 @@ To view the data that the software receives live or stores in the database, it m
 * Forwards messages to frontend software.
 * Records messages to MySQL-based database.
 * If connection is lost, continuously retries reconnection at short intervals.
-* Can be run as a Windows service.
+* Can be run as a service on Windows and Linux.
 
 **Our Data Link Software Series:**
 * ACARS Viewer
@@ -78,8 +78,9 @@ cannot be redistributed, published, or offered as a service without explicit per
 ## Kurulum ve Çalıştırma:
 
 ### Gereklilikler:
-- Windows işletim sistemi.
-- Python 3.x (sistem PATH'inde `python` ile erişilebilir olmalı)
+- Windows veya Linux (x86_64) işletim sistemi.
+- Python 3.x (Windows'ta `python`, Linux'ta `python3` olarak sistem PATH'inde erişilebilir olmalı)
+- Linux'ta ek olarak: `python3-venv` paketi ve zlib (`libz.so.1`; Ubuntu/Debian'da varsayılan olarak kuruludur)
 - Şu ek python paketleri (requirements.txt üzerinden otomatik kurulur):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
@@ -89,24 +90,45 @@ cannot be redistributed, published, or offered as a service without explicit per
 ### Kurulum:
 Yazılım taşınabilirdir, indirip sunucuda uygun bir dizine yerleştiriniz.
 
-İlk kurulumda (ve `requirements.txt` her güncellendiğinde) sanal ortam (`venv`) kurmak için yazılım dizinindeki `install-venv.bat` dosyasını bir kez çalıştırınız:
+İlk kurulumda (ve `requirements.txt` her güncellendiğinde) sanal ortam (`venv`) kurmak için yazılım dizinindeki kurulum betiğini bir kez çalıştırınız (Windows: `install-venv.bat`, Linux: `install-venv.sh`):
 
 ```
 install-venv.bat
 ```
 
+```bash
+./install-venv.sh
+```
+
 Bu betik:
-1. Yoksa `.\venv\` altında izole bir Python sanal ortamı oluşturur.
+1. Yoksa `venv` dizini altında izole bir Python sanal ortamı oluşturur.
 2. Bu sanal ortamın içindeki `pip`'i günceller.
 3. `requirements.txt` içindeki tüm paketleri sanal ortama kurar.
 
 Sistem genelindeki Python kurulumu kirletilmez; bağımlılıklar yalnızca bu projeye ait `venv` dizininde yaşar. `venv/` dizini `.gitignore`'da olduğundan repo'ya commit edilmez.
 
 ### Çalıştırma:
-Gerekli ayarları yaptıktan sonra `start.bat` betik dosyasını çalıştırınız. Kendiliğinden çalıştırma için bir görev zamanlaması oluşturabilirsiniz.
+Gerekli ayarları yaptıktan sonra Windows'ta `start.bat`, Linux'ta `start.sh` betik dosyasını çalıştırınız. Kendiliğinden çalıştırma için bir görev zamanlaması veya hizmet oluşturabilirsiniz.
 * `start.bat`, sanal ortamdaki Python (`venv\Scripts\python.exe`) ile `main.py`'yi çalıştırır. Sanal ortam yoksa hata verir ve `install-venv.bat`'in çalıştırılması gerektiğini bildirir.
+* `start.sh`, sanal ortamdaki Python (`venv/bin/python`) ile `main.py`'yi çalıştırır. Sanal ortam yoksa hata verir ve `install-venv.sh`'in çalıştırılması gerektiğini bildirir. Python'u `exec` ile başlattığı için systemd'nin durdurma sinyali (SIGTERM) doğrudan yazılıma ulaşır.
 * Bat betiği, doğrudan hizmet olarak çalıştırmaya uygun hazırlanmıştır. Uygun komutlar veya Servy gibi bir Windows hizmeti oluşturma aracı ile bat dosyasını çalıştıracak bir hizmet ekleyebilirsiniz.
-* Bat betiği, herhangi bir dizinden başlatıldığında bulunduğu dizini çalışma dizini olarak ayarlamaktadır. Bu yüzden, görev zamanlamasında veya hizmet ayarlarında, çalışma dizini olarak yazılımın bulunduğu dizin ayarlanmasa bile yazılım doğru şekilde çalışacaktır.
+* Bat betiği, herhangi bir dizinden başlatıldığında bulunduğu dizini çalışma dizini olarak ayarlamaktadır. Bu yüzden, görev zamanlamasında veya hizmet ayarlarında, çalışma dizini olarak yazılımın bulunduğu dizin ayarlanmasa bile yazılım doğru şekilde çalışacaktır. `start.sh` de aynı şekilde, herhangi bir dizinden veya systemd'den başlatıldığında kendi dizinini çalışma dizini olarak ayarlar.
+* Linux'ta systemd hizmeti örneği (`/etc/systemd/system/atc-data-link-backend.service`; kullanıcı ve yol kuruluma göre düzenlenmelidir):
+```ini
+[Unit]
+Description=Ibosoft ACARS Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=administrator
+ExecStart=/home/administrator/ibosoft/atc-data-link-backend/start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 > NOT: Henüz bağlantı kopukluğu tespitinde bazı sorunlar bulunmaktadır ve uzun süreli çalışmalarda bazen kendiliğinden yeniden bağlanma özelliği çalışmamaktadır. Bu yüzden görev zamanlamasını veya hizmet ayarlarını, şimdilik görevin/hizmetin günde 1-2 kere yeniden başlatılacağı şekilde yapınız.
 
 ---
@@ -114,8 +136,9 @@ Gerekli ayarları yaptıktan sonra `start.bat` betik dosyasını çalıştırın
 ## Ayarlamalar:
 
 ### Requirements:
-- Windows operating system.
-- Python 3.x (must be reachable as `python` on the system PATH).
+- Windows or Linux (x86_64) operating system.
+- Python 3.x (must be reachable on the system PATH as `python` on Windows, `python3` on Linux).
+- Additionally on Linux: the `python3-venv` package and zlib (`libz.so.1`; installed by default on Ubuntu/Debian).
 - The following additional Python packages (installed automatically through `requirements.txt`):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
@@ -125,24 +148,45 @@ Gerekli ayarları yaptıktan sonra `start.bat` betik dosyasını çalıştırın
 ### Installation:
 The software is portable, download and place it in an appropriate directory on the server.
 
-On first checkout (and whenever `requirements.txt` is updated), run the `install-venv.bat` script in the software directory once to set up a virtual environment:
+On first checkout (and whenever `requirements.txt` is updated), run the setup script in the software directory once to set up a virtual environment (Windows: `install-venv.bat`, Linux: `install-venv.sh`):
 
 ```
 install-venv.bat
 ```
 
+```bash
+./install-venv.sh
+```
+
 This script:
-1. Creates an isolated Python virtual environment under `.\venv\` if one does not already exist.
+1. Creates an isolated Python virtual environment under the `venv` directory if one does not already exist.
 2. Upgrades `pip` inside that virtual environment.
 3. Installs every package listed in `requirements.txt` into the virtual environment.
 
 The system-wide Python installation is left untouched; the dependencies live only inside this project's `venv` directory. `venv/` is included in `.gitignore`, so it is never committed to the repository.
 
 ### Running:
-After configuring the necessary settings, run the `start.bat` script file. You can create a task schedule for automatic startup.
+After configuring the necessary settings, run the `start.bat` script file on Windows or the `start.sh` script file on Linux. You can create a task schedule or a service for automatic startup.
 * `start.bat` runs `main.py` using the virtual environment's Python (`venv\Scripts\python.exe`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.bat` first.
+* `start.sh` runs `main.py` using the virtual environment's Python (`venv/bin/python`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.sh` first. Because it starts Python with `exec`, the stop signal (SIGTERM) from systemd reaches the software directly.
 * The bat script is prepared to run directly as a service. You can add a service that will run the bat file using appropriate commands or a Windows service creation tool like Servy.
-* The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly.
+* The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly. `start.sh` likewise sets its own directory as the working directory when started from any directory or from systemd.
+* Example systemd service on Linux (`/etc/systemd/system/atc-data-link-backend.service`; adjust the user and path to your installation):
+```ini
+[Unit]
+Description=Ibosoft ACARS Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=administrator
+ExecStart=/home/administrator/ibosoft/atc-data-link-backend/start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 > NOTE: There are still some issues with connection loss detection, and sometimes the automatic reconnection feature does not work during long-term operations. Therefore, for now, configure the task schedule or service settings so that the task/service is restarted 1-2 times a day.
 
 ---
@@ -543,7 +587,8 @@ Sorgu başarımı için, tabloya tekil sütun indekslerinin yanı sıra iki hede
 
 * ACARS iletilerinin, ARINC 620 ve ICAO SARP'larına göre uygun uygulama (ACARS Application) türlerine göre sınıflandırılması, uç yazılım tarafından Ibosoft Acars Decoding Library ve uç yazılım içerisindeki bazı kodlar aracılığıyla yapılmaktadır.
 * ARINC 620 dahilinde çözümlenmesi açıklanan iletilerin/uygulamalarının çözümlenmesi, uç yazılım tarafında Ibosoft Acars Decoding Library aracılığıyla yapılmaktadır.
-* Uç yazılımın; ACARS ağı üzerinden işleyen ARINC 622 uygulamalarının (ADS-C, CPDLC, MIAM ve bazı "H1" Label'li mühendislik iletileri) çözebilmesi için hazır bir kütüphane kullanılmıştır, derlenmiş DLL dosyası doğrudan projeye dahil edilmiştir. Bakınız: [libacars](https://github.com/szpajder/libacars)
+* Uç yazılımın; ACARS ağı üzerinden işleyen ARINC 622 uygulamalarının (ADS-C, CPDLC, MIAM ve bazı "H1" Label'li mühendislik iletileri) çözebilmesi için hazır bir kütüphane kullanılmıştır, derlenmiş kütüphane dosyaları (Windows: `libacars-2.dll`, Linux: `libacars-2.so`) doğrudan projeye dahil edilmiştir. Yazılım, çalıştığı işletim sistemine göre uygun dosyayı yükler. Bakınız: [libacars](https://github.com/szpajder/libacars)
+* Linux kütüphanesi (`libacars-2.so`), libacars 2.2.0 kaynak kodundan Ubuntu 24.04 x86_64 üzerinde, Windows DLL'i ile aynı ayarlarla (zlib açık, libxml2 kapalı) derlenmiştir. Tek dış bağımlılığı sistemdeki zlib'dir (`libz.so.1`).
 * libacars, "SA" Label'li (Media Advisory) iletileri de çözebilmektedir ancak bu Label'li iletilerin çözümlemesi, uç yazılım tarafında Ibosoft Acars Decoding Library ile yapılmaktadır.
 * libacars kütüphanesinin yapısı gereği, kütüphanenin arka yazılıma dahil edilmesi kararı alınmıştır.
 * ARINC 622 uygulamları çözülürken, canlı iletiler için, ileti ACARS ağı iletisi ise ve ileti Label'i AA (CPDLC), BA (CPDLC), A6 (ADS-C), B6 (ADS-C), MA (MIAM), H1 ise ileti arka yazılımda çözülür ve canlı ileti bilgisiyle birlikte uç yazılıma iletilir.
@@ -567,12 +612,15 @@ acars-backend/
 ├── requirements.txt        # Python bağımlılıkları
 ├── install-venv.bat        # Sanal ortamı (venv) kuran ve bağımlılıkları yükleyen ilk kurulum betiği
 ├── start.bat               # Windows başlatma betiği (sanal ortamdaki python ile çalıştırır)
+├── install-venv.sh         # Linux ilk kurulum betiği (venv oluşturur, bağımlılıkları yükler)
+├── start.sh                # Linux başlatma betiği (sanal ortamdaki python ile çalıştırır, systemd uyumlu)
 ├── LICENSE                 # Lisans dosyası
 ├── README.md               # Bu dosya
 ├── SSE_MIGRATION.md        # SSE geçiş dokümantasyonu
 ├── libacars/               # libacars kütüphane klasörü
 │   ├── libacars-2.dll      # libacars ARINC 622 çözücü kütüphanesi
 │   ├── zlib1.dll           # zlib sıkıştırma kütüphanesi (bağımlılık)
+│   ├── libacars-2.so       # libacars kütüphanesi, Linux x86_64 derlemesi (zlib sistemden kullanılır)
 │   └── LICENSE.md          # libacars lisans dosyası
 └── atc_datalink.log        # Log dosyası (Yazılım çalıştırılınca oluşturulur.)
 ```
@@ -586,8 +634,9 @@ acars-backend/
 ## Installation and Running:
 
 ### Requirements:
-- Windows operating system.
-- Python 3.x (must be reachable as `python` on the system PATH).
+- Windows or Linux (x86_64) operating system.
+- Python 3.x (must be reachable on the system PATH as `python` on Windows, `python3` on Linux).
+- Additionally on Linux: the `python3-venv` package and zlib (`libz.so.1`; installed by default on Ubuntu/Debian).
 - The following additional Python packages (installed automatically through `requirements.txt`):
   - mysql-connector-python==8.2.0
   - Flask==3.0.0
@@ -597,24 +646,45 @@ acars-backend/
 ### Installation:
 The software is portable, download and place it in an appropriate directory on the server.
 
-On first checkout (and whenever `requirements.txt` is updated), run the `install-venv.bat` script in the software directory once to set up a virtual environment:
+On first checkout (and whenever `requirements.txt` is updated), run the setup script in the software directory once to set up a virtual environment (Windows: `install-venv.bat`, Linux: `install-venv.sh`):
 
 ```
 install-venv.bat
 ```
 
+```bash
+./install-venv.sh
+```
+
 This script:
-1. Creates an isolated Python virtual environment under `.\venv\` if one does not already exist.
+1. Creates an isolated Python virtual environment under the `venv` directory if one does not already exist.
 2. Upgrades `pip` inside that virtual environment.
 3. Installs every package listed in `requirements.txt` into the virtual environment.
 
 The system-wide Python installation is left untouched; the dependencies live only inside this project's `venv` directory. `venv/` is included in `.gitignore`, so it is never committed to the repository.
 
 ### Running:
-After configuring the necessary settings, run the `start.bat` script file. You can create a task schedule for automatic startup.
+After configuring the necessary settings, run the `start.bat` script file on Windows or the `start.sh` script file on Linux. You can create a task schedule or a service for automatic startup.
 * `start.bat` runs `main.py` using the virtual environment's Python (`venv\Scripts\python.exe`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.bat` first.
+* `start.sh` runs `main.py` using the virtual environment's Python (`venv/bin/python`). If the virtual environment is missing, the script errors out and tells you to run `install-venv.sh` first. Because it starts Python with `exec`, the stop signal (SIGTERM) from systemd reaches the software directly.
 * The bat script is prepared to run directly as a service. You can add a service that will run the bat file using appropriate commands or a Windows service creation tool like Servy.
-* The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly.
+* The bat script sets its own directory as the working directory when started from any directory. Therefore, even if the software's directory is not set as the working directory in the task schedule or service settings, the software will work correctly. `start.sh` likewise sets its own directory as the working directory when started from any directory or from systemd.
+* Example systemd service on Linux (`/etc/systemd/system/atc-data-link-backend.service`; adjust the user and path to your installation):
+```ini
+[Unit]
+Description=Ibosoft ACARS Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=administrator
+ExecStart=/home/administrator/ibosoft/atc-data-link-backend/start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
 > NOTE: There are still some issues with connection loss detection, and sometimes the automatic reconnection feature does not work during long-term operations. Therefore, for now, configure the task schedule or service settings so that the task/service is restarted 1-2 times a day.
 
 ---
@@ -894,7 +964,8 @@ For query performance, in addition to the single-column indexes the table gets t
 
 * Classification of ACARS messages according to appropriate application (ACARS Application) types according to ARINC 620 and ICAO SARPs is done by the frontend software through Ibosoft Acars Decoding Library and some codes in the frontend software.
 * Decoding of messages/applications that are described to be decoded within ARINC 620 is done by Ibosoft Acars Decoding Library on the frontend software side.
-* For the frontend software to decode ARINC 622 applications (ADS-C, CPDLC, MIAM, and some "H1" labeled engineering messages) operating via ACARS network, a ready-made library has been used, and the compiled DLL file is directly included in the project. See: [libacars](https://github.com/szpajder/libacars)
+* For the frontend software to decode ARINC 622 applications (ADS-C, CPDLC, MIAM, and some "H1" labeled engineering messages) operating via ACARS network, a ready-made library has been used, and the compiled library files (Windows: `libacars-2.dll`, Linux: `libacars-2.so`) are directly included in the project. The software loads the appropriate file for the operating system it runs on. See: [libacars](https://github.com/szpajder/libacars)
+* The Linux library (`libacars-2.so`) was built from the libacars 2.2.0 source code on Ubuntu 24.04 x86_64 with the same options as the Windows DLL (zlib enabled, libxml2 disabled). Its only external dependency is the system zlib (`libz.so.1`).
 * libacars can also decode "SA" labeled (Media Advisory) messages, but the decoding of these labeled messages is done by Ibosoft Acars Decoding Library on the frontend software side.
 * Due to the structure of the libacars library, a decision was made to include the library in the backend software.
 * When decoding ARINC 622 applications, for live messages, if the message is an ACARS network message and the message Label is AA (CPDLC), BA (CPDLC), A6 (ADS-C), B6 (ADS-C), MA (MIAM), H1, the message is decoded in the backend software and forwarded to the frontend software along with live message information.
@@ -918,12 +989,15 @@ acars-backend/
 ├── requirements.txt        # Python dependencies
 ├── install-venv.bat        # First-time setup script: creates the venv and installs dependencies
 ├── start.bat               # Windows startup script (runs main.py via the venv's python)
+├── install-venv.sh         # Linux first-time setup script: creates the venv and installs dependencies
+├── start.sh                # Linux startup script (runs main.py via the venv's python, systemd compatible)
 ├── LICENSE                 # License file
 ├── README.md               # This file
 ├── SSE_MIGRATION.md        # SSE migration documentation
 ├── libacars/               # libacars library folder
 │   ├── libacars-2.dll      # libacars ARINC 622 decoder library
 │   ├── zlib1.dll           # zlib compression library (dependency)
+│   ├── libacars-2.so       # libacars library, Linux x86_64 build (uses the system zlib)
 │   └── LICENSE.md          # libacars license file
 └── atc_datalink.log        # Log file (Created when the software is run.)
 ```

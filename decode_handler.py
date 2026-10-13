@@ -42,22 +42,23 @@ class DecodeHandler:
     def __init__(self, lib_path=None):
         """
         Args:
-            lib_path: libacars-2.dll'in tam yolu
+            lib_path: libacars kütüphanesinin tam yolu (Windows: libacars-2.dll, Linux: libacars-2.so)
         """
         self.lib = None
         self.initialized = False
-        
+
         try:
             if lib_path is None:
-                # DLL'i ana dizindeki libacars klasöründe ara
+                # Kütüphaneyi ana dizindeki libacars klasöründe ara (işletim sistemine göre)
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                lib_path = os.path.join(script_dir, 'libacars', 'libacars-2.dll')
-            
+                lib_name = 'libacars-2.dll' if os.name == 'nt' else 'libacars-2.so'
+                lib_path = os.path.join(script_dir, 'libacars', lib_name)
+
             if not os.path.exists(lib_path):
-                logger.warning(f"libacars DLL bulunamadı: {lib_path}. Decode özelliği devre dışı.")
+                logger.warning(f"libacars kütüphanesi bulunamadı: {lib_path}. Decode özelliği devre dışı.")
                 return
-            
-            # DLL'i yükle
+
+            # Kütüphaneyi yükle
             self.lib = ctypes.CDLL(lib_path)
             
             # la_proto_node yapısını tanımla (opaque pointer)

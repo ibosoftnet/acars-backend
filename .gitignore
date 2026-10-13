@@ -22,6 +22,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+# libacars native library for Linux (built for Ubuntu 24.04 x86_64)
+!libacars/libacars-2.so
 .Python
 build/
 develop-eggs/
