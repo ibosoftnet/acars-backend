@@ -6,8 +6,9 @@ handler and reached at `/acars-app/<application>` with its own query schema.
 
 Currently registered applications:
 - `datis` — recent DEP/ARR D-ATIS messages for a given ICAO.
+- `dcl`   — recent DCL (departure clearance) messages for a given ICAO.
 
-Future applications (e.g. dcl, pdc, aoc) can be added by writing a new
+Future applications (e.g. pdc, aoc) can be added by writing a new
 `_handle_<name>` method and registering it in `self._handlers`.
 
 Authentication: this module only accepts the static `X-API-Key` HTTP header
@@ -35,6 +36,9 @@ ACARS_APP_NAMES = ('acarsdec', 'vdlm2dec', 'jaero', 'dumphfdl')
 # D-ATIS uplink label.
 DATIS_LABEL = 'A9'
 
+# DCL (departure clearance) label.
+DCL_LABEL = 'A3'
+
 # Accepted ATIS direction tokens (D-ATIS).
 VALID_DATIS_TYPES = ('dep', 'arr')
 
@@ -45,7 +49,7 @@ _ICAO_PATTERN = re.compile(r'^[A-Z]{4}$')
 class AcarsAppApi:
     """HTTP API dispatching ATS-application queries by sub-path."""
 
-    def __init__(self, db_handler, host, port, max_count_per_type,
+    def __init__(self, db_handler, host, port, max_count_per_type, dcl_max_count,
                  api_keys=None, rate_limit_max=0, rate_limit_window_sec=1,
                  trust_proxy=False):
         """
@@ -53,9 +57,9 @@ class AcarsAppApi:
             db_handler: Shared DatabaseHandler instance.
             host (str): IP address to bind to.
             port (int): Port to listen on.
-            max_count_per_type (int): Hard cap on `count` per type (per
-                request). Each handler applies this cap to its own count
-                parameter.
+            max_count_per_type (int): D-ATIS hard cap on `count` per type
+                (dep/arr) per request.
+            dcl_max_count (int): DCL hard cap on `count` per request.
             api_keys (iterable[str] | None): Static keys accepted via the
                 X-API-Key HTTP header. JWT cookies are intentionally NOT
                 accepted by this module.
@@ -70,6 +74,7 @@ class AcarsAppApi:
         self.host = host
         self.port = port
         self.max_count_per_type = max_count_per_type
+        self.dcl_max_count = dcl_max_count
         self.app = Flask(__name__)
         CORS(self.app)
         self.thread = None
@@ -78,6 +83,7 @@ class AcarsAppApi:
         # Registry of <application> -> handler. New ATS applications go here.
         self._handlers = {
             'datis': self._handle_datis,
+            'dcl': self._handle_dcl,
         }
 
         self._setup_routes()
@@ -190,6 +196,79 @@ class AcarsAppApi:
         direction = atis_type.upper()  # 'DEP' or 'ARR'
         regex = f"/{icao}[ -]{direction}[ -]ATIS[ -]"
         params = [DATIS_LABEL, *ACARS_APP_NAMES, regex]
+        time_clause = ""
+        if days is not None:
+            cutoff = time.time() - days * 86400
+            time_clause = "  AND timestamp_msg >= %s "
+            params.append(cutoff)
+        params.append(int(count))
+        sql = (
+            "SELECT timestamp_msg, text "
+            "FROM messages_json_raw "
+            "WHERE label = %s "
+            "  AND app_name IN (%s, %s, %s, %s) "
+            "  AND text REGEXP %s "
+            f"{time_clause}"
+            "ORDER BY timestamp_msg DESC "
+            "LIMIT %s"
+        )
+
+        rows = self.db_handler.execute_read(sql, params)
+        return [
+            {"timestamp": row[0], "text": row[1]}
+            for row in rows
+        ]
+
+    def _handle_dcl(self):
+        """`/acars-app/dcl?icao=<ICAO>&count=<N>&days=<N>`"""
+        # ICAO -------------------------------------------------------------
+        icao_raw = request.args.get('icao', default='').strip().upper()
+        if not _ICAO_PATTERN.match(icao_raw):
+            return jsonify({"error": "icao must be 4 letters"}), 400
+        icao = icao_raw
+
+        # count ------------------------------------------------------------
+        count_raw = request.args.get('count', default='1')
+        try:
+            count = int(count_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "count must be an integer"}), 400
+        if count < 1:
+            return jsonify({"error": "count must be >= 1"}), 400
+        if count > self.dcl_max_count:
+            count = self.dcl_max_count
+
+        # days (optional) --------------------------------------------------
+        days_raw = request.args.get('days', default=None)
+        days = None
+        if days_raw is not None:
+            try:
+                days = int(days_raw)
+            except (TypeError, ValueError):
+                return jsonify({"error": "days must be an integer"}), 400
+            if days < 1:
+                return jsonify({"error": "days must be >= 1"}), 400
+
+        # Query ------------------------------------------------------------
+        result = {"icao": icao, "count": count}
+        try:
+            result["dcl"] = self._query_dcl(icao, count, days)
+        except Exception as e:
+            logger.error(f"DCL query failed for icao={icao}: {e}")
+            return jsonify({"error": "internal server error"}), 500
+
+        return jsonify(result)
+
+    def _query_dcl(self, icao, count, days=None):
+        """Return [{timestamp, text}, ...] for the requested ICAO.
+
+        Same query as D-ATIS, with the DCL label and the ICAO matched as
+        '/<ICAO>' in the text (no DEP/ARR ATIS part). ICAO is already
+        validated as [A-Z]{4}, so no regex special characters can be
+        injected by callers.
+        """
+        regex = f"/{icao}"
+        params = [DCL_LABEL, *ACARS_APP_NAMES, regex]
         time_clause = ""
         if days is not None:
             cutoff = time.time() - days * 86400

@@ -260,6 +260,7 @@ class ATCDatalinkBackend:
             max_per_type = self.config.getint(
                 'ACARS_APP_API', 'max_count_per_type', fallback=5
             )
+            dcl_max_count = self.config.getint('ACARS_APP_API', 'dcl_max_count')
             rate_limit_max = self.config.getint(
                 'ACARS_APP_API', 'rate_limit_max', fallback=0
             )
@@ -275,6 +276,7 @@ class ATCDatalinkBackend:
                 host=host,
                 port=port,
                 max_count_per_type=max_per_type,
+                dcl_max_count=dcl_max_count,
                 api_keys=self._sec.get('api_keys'),
                 rate_limit_max=rate_limit_max,
                 rate_limit_window_sec=rate_limit_window_sec,

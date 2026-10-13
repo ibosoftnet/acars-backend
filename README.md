@@ -236,10 +236,11 @@ Ayarlar, config.ini dosyası aracılığıyla yapılmaktadır. Ayarların açık
 - [DECODING]
   - enabled = true ya da false. ACARS ağı ARINC 622 uygulamalarının çözülmesi ile ilgili arka yazılım işlevlerinin etkinleştirilip etkinleştirilmeyeceğini belirler.
 - [ACARS_APP_API]
-  - enabled = true ya da false. Harici uygulamaların ATS uygulama iletilerine sorgu atabilmesi için ACARS Application API modülünün etkinleştirilip etkinleştirilmeyeceğini belirler. Şu an `datis` uygulaması destekleniyor; ileride yeni ATS uygulamaları (dcl, pdc, aoc vb.) modüldeki handler kaydına satır ekleyerek aktive edilebilir.
+  - enabled = true ya da false. Harici uygulamaların ATS uygulama iletilerine sorgu atabilmesi için ACARS Application API modülünün etkinleştirilip etkinleştirilmeyeceğini belirler. Şu an `datis` ve `dcl` uygulamaları destekleniyor; ileride yeni ATS uygulamaları (pdc, aoc vb.) modüldeki handler kaydına satır ekleyerek aktive edilebilir.
   - host = ACARS Application API sunucusunun IP adresi (Ör: 0.0.0.0).
   - port = ACARS Application API sunucusunun port numarası (Ör: 10012). Mevcut [BACKEND] portu ile çakışmamalıdır.
-  - max_count_per_type = Tek bir API çağrısında, tip başına (örn. D-ATIS için DEP/ARR) döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değerle sınırlandırılır. (Ör: 5)
+  - max_count_per_type = D-ATIS: tek bir API çağrısında tip başına (DEP/ARR) döndürülebilecek azami ileti sayısı. Çağıranın istediği `count` bu değerle sınırlandırılır. (Ör: 5)
+  - dcl_max_count = DCL: tek bir API çağrısında döndürülebilecek azami DCL ileti sayısı. Çağıranın istediği `count` bu değerle sınırlandırılır. Zorunludur. (Ör: 30)
   - rate_limit_window_sec = IP başına hız sınırı için kayan pencerenin süresi (saniye). Bilinçli olarak **kısa** tutulur: ani istek sellerini kısar ama istemciyi uzun süre kilitlemez; pencere dolar dolmaz yeniden istek atılabilir. (Ör: 1)
   - rate_limit_max = Her `rate_limit_window_sec` penceresinde, IP başına izin verilen azami istek sayısı. Aşıldığında istek `429 Too Many Requests` + `Retry-After` ile reddedilir. `0` verilirse hız sınırı tamamen kapatılır. (Ör: 2)
   - trust_proxy = true ya da false. Yazılım nginx reverse proxy arkasında çalışıyorsa `true` yapılır; böylece hız sınırı için proxy adresi yerine `X-Forwarded-For` başlığındaki gerçek istemci IP'si kullanılır.
@@ -347,10 +348,11 @@ Settings are made via the config.ini file. The explanations of the settings are 
 - [DECODING]
   - enabled = true or false. Determines whether backend software functions related to decoding ACARS network ARINC 622 applications are enabled.
 - [ACARS_APP_API]
-  - enabled = true or false. Determines whether the ACARS Application API module is enabled. This module lets external applications query ATS application messages collected by the backend. The `datis` application is currently supported; new ATS applications (dcl, pdc, aoc, ...) can be enabled later by adding a handler entry inside the module.
+  - enabled = true or false. Determines whether the ACARS Application API module is enabled. This module lets external applications query ATS application messages collected by the backend. The `datis` and `dcl` applications are currently supported; new ATS applications (pdc, aoc, ...) can be enabled later by adding a handler entry inside the module.
   - host = IP address of the ACARS Application API server (e.g., 0.0.0.0).
   - port = Port number of the ACARS Application API server (e.g., 10012). Must not conflict with the [BACKEND] port.
-  - max_count_per_type = Maximum number of messages a single API call may return per type (for example DEP/ARR for D-ATIS). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - max_count_per_type = D-ATIS: maximum number of messages a single API call may return per type (DEP/ARR). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - dcl_max_count = DCL: maximum number of DCL messages a single API call may return. The caller-supplied `count` is clamped to this value. Required. (e.g., 30)
   - rate_limit_window_sec = Length (in seconds) of the sliding window used for per-IP rate limiting. Kept deliberately **short**: it throttles bursts/floods without locking a client out for long — a client may retry as soon as the window rolls over. (e.g., 1)
   - rate_limit_max = Maximum number of requests allowed per IP within each `rate_limit_window_sec` window. When exceeded, the request is rejected with `429 Too Many Requests` + `Retry-After`. Set to `0` to disable rate limiting entirely. (e.g., 2)
   - trust_proxy = true or false. Set to `true` when running behind the nginx reverse proxy so that the real client IP from the `X-Forwarded-For` header is used for rate limiting instead of the proxy address.
@@ -465,7 +467,7 @@ Yazılım, TCP ile getirilen ASCII kodlu iletilerden JSON verisini ayrıştırı
 - `flight`: ARINC 618/620 Flight Identifier
 
 ### ACARS Application API:
-Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç sistemler) data link arka yazılımının topladığı ATS uygulama iletilerine erişebilmesi için tasarlanmıştır. Modül **genişlemeye uygundur**: her ATS uygulaması ayrı bir alt yol (sub-path) altında, kendi sorgu parametre şemasıyla servis edilir. Şu an `datis` uygulaması destekleniyor; ileride `dcl`, `pdc`, `aoc` gibi uygulamalar modüldeki handler kaydına satır eklenerek aktive edilebilir.
+Bu modül, harici uygulamaların (3. taraf araçlar, entegrasyonlar, başka iç sistemler) data link arka yazılımının topladığı ATS uygulama iletilerine erişebilmesi için tasarlanmıştır. Modül **genişlemeye uygundur**: her ATS uygulaması ayrı bir alt yol (sub-path) altında, kendi sorgu parametre şemasıyla servis edilir. Şu an `datis` ve `dcl` uygulamaları destekleniyor; ileride `pdc`, `aoc` gibi uygulamalar modüldeki handler kaydına satır eklenerek aktive edilebilir.
 
 Erişim yalnızca ACARS network trafiği (`app.name` ∈ `acarsdec`, `vdlm2dec`, `jaero`, `dumphfdl`) içinden filtrelenir; CPDLC, ATN vb. diğer network mesajları sonuç dışında tutulur.
 
@@ -519,6 +521,18 @@ Backend ICAO'yu bu metinde `/<ICAO>[ -]DEP[ -]ATIS[ -]` veya `/<ICAO>[ -]ARR[ -]
 - `count` alanı, çağıranın istediği değerin (sınırlandırma sonrası) etkili tavanını yansıtır.
 - `days` verilmezse zaman kısıtı uygulanmaz; tüm kayıt geçmişi taranır.
 - Mesajlar `timestamp` alanına göre azalan (en yeni üstte) sıralanır.
+
+**Uygulama: `dcl` (DCL — Departure Clearance)**
+
+`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Belirtilen havalimanı ICAO'su için son N adet DCL iletisini JSON olarak döner. Sorgu D-ATIS ile aynıdır; farkı ACARS `A3` label'lı kayıtlar içinde aranması ve ICAO'nun metinde `/<ICAO>` desenine göre (REGEXP) eşleşmesidir. `type` parametresi yoktur.
+
+| Parametre | Zorunlu | Format | Açıklama |
+|---|---|---|---|
+| `icao` | Evet | 4 harf (A–Z, küçük/büyük harf duyarsız; uppercase'e normalize edilir) | Havalimanı ICAO kodu |
+| `count` | Hayır (varsayılan `1`) | 1 ≤ N ≤ `dcl_max_count` | Kaç mesaj döneceği |
+| `days` | Hayır (varsayılan: yok) | Pozitif tam sayı | Yalnızca son N gün içindeki iletilerde arama yapılır; verilmezse tüm geçmiş taranır |
+
+**Yanıt JSON yapısı:** `{"icao": "LTFM", "count": 30, "dcl": [{"timestamp": ..., "text": "..."}]}` — eşleşme yoksa `dcl` `[]` döner; mesajlar en yeni üstte sıralanır.
 
 **Hız sınırı ve eşzamanlılık:** Modül, IP başına **kısa pencereli** bir hız sınırı uygular (bkz. `[ACARS_APP_API].rate_limit_window_sec` / `rate_limit_max`); eşiği aşan istekler `429 Too Many Requests` + `Retry-After` ile geri çevrilir. Bu, çok sayıda eşzamanlı istek geldiğinde (örn. arayan bir sitenin istek seli) veri tabanının aşırı yüklenmesini önler. Okuma sorguları ayrı bir bağlantı havuzundan (`[DATABASE].read_pool_size`) yürütülür; bu sayede API sorguları TCP alıcı iş parçacığının yazma yolunu etkilemez ve yoğun okuma trafiği ileti kaydını kesintiye uğratmaz.
 
@@ -606,7 +620,7 @@ acars-backend/
 ├── decode_handler.py       # ACARS ileti çözücü (libacars sarmalayıcı)
 ├── tcp_client.py           # TCP istemci modülü
 ├── sse_server.py           # SSE sunucu modülü
-├── acars_app_api.py        # ACARS Application API modülü (D-ATIS + ileride diğer ATS uygulamaları)
+├── acars_app_api.py        # ACARS Application API modülü (D-ATIS, DCL + ileride diğer ATS uygulamaları)
 ├── rate_limiter.py         # ACARS Application API için IP başına kısa pencereli hız sınırlayıcı
 ├── config.ini              # Yapılandırma dosyası
 ├── requirements.txt        # Python bağımlılıkları
@@ -734,10 +748,11 @@ Settings are made via the config.ini file. The explanations of the settings are 
 - [DECODING]
   - enabled = true or false. Determines whether backend software functions related to decoding ACARS network ARINC 622 applications are enabled.
 - [ACARS_APP_API]
-  - enabled = true or false. Determines whether the ACARS Application API module is enabled. This module lets external applications query ATS application messages collected by the backend. The `datis` application is currently supported; new ATS applications (dcl, pdc, aoc, ...) can be enabled later by adding a handler entry inside the module.
+  - enabled = true or false. Determines whether the ACARS Application API module is enabled. This module lets external applications query ATS application messages collected by the backend. The `datis` and `dcl` applications are currently supported; new ATS applications (pdc, aoc, ...) can be enabled later by adding a handler entry inside the module.
   - host = IP address of the ACARS Application API server (e.g., 0.0.0.0).
   - port = Port number of the ACARS Application API server (e.g., 10012). Must not conflict with the [BACKEND] port.
-  - max_count_per_type = Maximum number of messages a single API call may return per type (for example DEP/ARR for D-ATIS). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - max_count_per_type = D-ATIS: maximum number of messages a single API call may return per type (DEP/ARR). The caller-supplied `count` is clamped to this value. (e.g., 5)
+  - dcl_max_count = DCL: maximum number of DCL messages a single API call may return. The caller-supplied `count` is clamped to this value. Required. (e.g., 30)
   - rate_limit_window_sec = Length (in seconds) of the sliding window used for per-IP rate limiting. Kept deliberately **short**: it throttles bursts/floods without locking a client out for long — a client may retry as soon as the window rolls over. (e.g., 1)
   - rate_limit_max = Maximum number of requests allowed per IP within each `rate_limit_window_sec` window. When exceeded, the request is rejected with `429 Too Many Requests` + `Retry-After`. Set to `0` to disable rate limiting entirely. (e.g., 2)
   - trust_proxy = true or false. Set to `true` when running behind the nginx reverse proxy so that the real client IP from the `X-Forwarded-For` header is used for rate limiting instead of the proxy address.
@@ -852,7 +867,7 @@ The software parses JSON data from ASCII-encoded messages received via TCP. An e
 - `flight`: ARINC 618/620 Flight Identifier
 
 ### ACARS Application API:
-This module is designed to let external applications (third-party tools, integrations, other internal systems) query ATS-application messages collected by the data link backend. The module is **extensible**: each ATS application is served under its own sub-path with its own query schema. The `datis` application is currently supported; future applications (`dcl`, `pdc`, `aoc`, ...) can be enabled by adding a handler entry inside the module.
+This module is designed to let external applications (third-party tools, integrations, other internal systems) query ATS-application messages collected by the data link backend. The module is **extensible**: each ATS application is served under its own sub-path with its own query schema. The `datis` and `dcl` applications are currently supported; future applications (`pdc`, `aoc`, ...) can be enabled by adding a handler entry inside the module.
 
 Results are filtered to ACARS-network traffic only (`app.name` ∈ `acarsdec`, `vdlm2dec`, `jaero`, `dumphfdl`); CPDLC, ATN and other non-ACARS messages are excluded.
 
@@ -906,6 +921,18 @@ The backend searches `A9`-labelled rows with a REGEXP of the form `/<ICAO>[ -]DE
 - The `count` field reflects the effective per-type cap after clamping.
 - When `days` is omitted no time filter is applied; the entire message history is searched.
 - Messages are sorted by `timestamp` in descending order (newest first).
+
+**Application: `dcl` (DCL — Departure Clearance)**
+
+`GET /acars-app/dcl?icao=<ICAO>&count=<N>&days=<D>` — Returns up to N DCL messages for the given airport ICAO. The query is the same as D-ATIS, except that it searches `A3`-labelled rows and matches the ICAO in the text with a REGEXP of the form `/<ICAO>`. There is no `type` parameter.
+
+| Parameter | Required | Format | Description |
+|---|---|---|---|
+| `icao` | Yes | 4 letters (A–Z, case-insensitive; normalised to uppercase) | Airport ICAO code |
+| `count` | No (default `1`) | 1 ≤ N ≤ `dcl_max_count` | How many messages to return |
+| `days` | No (default: none) | Positive integer | Restrict search to messages from the last N days; omit to search all history |
+
+**Response JSON:** `{"icao": "LTFM", "count": 30, "dcl": [{"timestamp": ..., "text": "..."}]}` — `dcl` is `[]` when there is no match; messages are sorted newest first.
 
 **Rate limiting and concurrency:** The module enforces a **short-window** per-IP rate limit (see `[ACARS_APP_API].rate_limit_window_sec` / `rate_limit_max`); requests over the threshold are rejected with `429 Too Many Requests` + `Retry-After`. This protects the database from overload under a burst of concurrent requests (e.g. a calling site flooding the endpoint). Read queries run on a separate connection pool (`[DATABASE].read_pool_size`), so API queries never touch the TCP receiver thread's write path and heavy read traffic cannot interrupt message recording.
 
@@ -983,7 +1010,7 @@ acars-backend/
 ├── decode_handler.py       # ACARS message decoder (libacars wrapper)
 ├── tcp_client.py           # TCP client module
 ├── sse_server.py           # SSE server module
-├── acars_app_api.py        # ACARS Application API module (D-ATIS + future ATS applications)
+├── acars_app_api.py        # ACARS Application API module (D-ATIS, DCL + future ATS applications)
 ├── rate_limiter.py         # Per-IP short-window rate limiter for the ACARS Application API
 ├── config.ini              # Configuration file
 ├── requirements.txt        # Python dependencies
